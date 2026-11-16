@@ -2,6 +2,8 @@
 
 把 iPad 变成 Mac 的主显示器，自动连接，失败不弹窗。
 
+**English:** Turn your iPad into a Mac's primary display — auto-connect when you're at the desk, silent cleanup of the `-1010` connection-failure popup, and no manual Screen Mirroring clicks every morning.
+
 适合固定工位：iPad 架在支架上当主屏，Mac mini 藏在桌下，每天开机自动连上，人走开自动不连。
 
 <p align="center">
