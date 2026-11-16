@@ -4,6 +4,14 @@
 
 适合固定工位：iPad 架在支架上当主屏，Mac mini 藏在桌下，每天开机自动连上，人走开自动不连。
 
+<p align="center">
+  <img src="docs/panel.png" alt="iPad 随航控制面板：已连接 iPad Pro、已设为主屏、自动重连 10 秒、三条就绪日志" width="280">
+</p>
+
+<p align="center">
+  <img src="docs/desktop.jpg" alt="iPad 上显示的完整 macOS 桌面：菜单栏、桌面小组件、Dock 全部铺开" width="620">
+</p>
+
 ## 为什么做这个
 
 macOS 的随航（Sidecar）功能本身很好用，但把它当**主显示器**用有几个麻烦：

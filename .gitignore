@@ -3,3 +3,4 @@ build/
 dist/
 *.zip
 *.app/
+docs/capture.sh
