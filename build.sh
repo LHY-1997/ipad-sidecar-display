@@ -53,8 +53,7 @@ swiftc -O -parse-as-library -target "x86_64-apple-macos$MIN_MACOS" \
 lipo -create "$BUILD/m-arm" "$BUILD/m-x86" -output "$BUILD/menu-bar"
 ok "菜单栏面板（含虚拟屏）"
 
-# 虚拟屏已合并进菜单栏 app（Sources/VirtualScreen.swift），
-# 不再单独编译 ipad-vdisplay 进程。Sources/VDisplay.swift 仅作历史参考保留。
+# 虚拟屏已合并进菜单栏 app（Sources/VirtualScreen.swift），不再单独编译进程。
 
 # ---------- 4. 组装 .app ----------
 say "组装 $APP_NAME"
@@ -97,6 +96,8 @@ say "生成 $ZIP_NAME"
 cd "$DIST"
 ditto -c -k --sequesterRsrc . "$ROOT/$ZIP_NAME"
 cd "$ROOT"
+# 去掉 ditto 附带的 __MACOSX 资源分叉目录，别人解压不会看到一堆垃圾文件
+zip -q -d "$ZIP_NAME" "__MACOSX/*" 2>/dev/null || true
 ok "$ROOT/$ZIP_NAME"
 
 echo ""
