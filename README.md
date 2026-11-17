@@ -42,14 +42,16 @@ macOS 的随航（Sidecar）功能本身很好用，但把它当**主显示器**
 
 ### 下载即用
 
-从 Releases 下载 `iPad随航工具集-2.0.zip`，解压后**右键点击 `安装.command`** 选「打开」。
+从 [Releases](https://github.com/nishtica/ipad-sidecar-display/releases/latest) 下载 `iPad-Sidecar-Display-2.0.zip`，解压后**右键点击 `安装.command`** 选「打开」。
 
 > 为什么是右键？脚本没有 Apple 开发者签名，macOS 第一次会拦。右键选「打开」会多出「打开」按钮，点它就行。
+
+> zip 为什么用英文名：GitHub 上传 Release 附件时会剥掉文件名里的中文字符，`iPad随航工具集-2.0.zip` 会被存成 `iPad.-2.0.zip`。解压出来的东西都是中文的，只有外层文件名是英文。
 
 ### 从源码构建
 
 ```bash
-git clone <this-repo>
+git clone git@github.com:nishtica/ipad-sidecar-display.git
 cd ipad-sidecar-display
 ./build.sh
 ```
