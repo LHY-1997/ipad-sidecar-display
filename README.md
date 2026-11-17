@@ -7,7 +7,7 @@
 适合固定工位：iPad 架在支架上当主屏，Mac mini 藏在桌下，每天开机自动连上，人走开自动不连。
 
 <p align="center">
-  <img src="docs/panel.png" alt="iPad 随航控制面板：已连接 iPad Pro、已设为主屏、自动重连 10 秒、三条就绪日志" width="280">
+  <img src="docs/panel.png" alt="iPad 随航控制面板：已连接 iPad Pro、已设为主屏、虚拟屏开启、自动重连 10 秒、三条就绪日志、左下角版本号 v2.0" width="280">
 </p>
 
 <p align="center">
