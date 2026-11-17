@@ -35,7 +35,7 @@
 或者终端里跑：
 
 ```bash
-xattr -dr com.apple.quarantine ~/Downloads/iPad-Sidecar-Display-2.0
+xattr -dr com.apple.quarantine ~/Downloads/iPad-Sidecar-Display-2.1
 ```
 
 ---
@@ -52,10 +52,10 @@ iPad 锁不锁屏都能连上，不用特意解锁。
 
 ## 菜单栏
 
-点图标可以：
+菜单栏上有个 iPad 图标（Wi-Fi 和搜索之间），点它弹出控制面板：
 
 - 手动连接 / 断开
-- 暂停自动守护（比如你在用 iPad 做别的事）
+- 暂停自动重连（比如你在用 iPad 做别的事）
 - 打开日志
 
 ## 排查

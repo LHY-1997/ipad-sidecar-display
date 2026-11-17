@@ -698,14 +698,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 点 Dock 图标时，如果窗口都不见了就重新显示
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag {
-            if let w = NSApp.windows.first {
-                positionOnMouseScreen(w)
-                w.makeKeyAndOrderFront(nil)
-            }
-        }
+        if !flag { showPanel() }
         NSApp.activate(ignoringOtherApps: true)
         return true
+    }
+
+    /// 把主面板窗口提到前面。
+    /// 加了菜单栏图标之后 NSApp.windows 里会混进图标的附属窗口，必须按标题筛。
+    private func showPanel() {
+        let w = NSApp.windows.first { $0.title == "iPad 随航" && $0.canBecomeMain }
+            ?? NSApp.windows.first { $0.title == "iPad 随航" }
+        guard let w = w else { return }
+        positionOnMouseScreen(w)
+        w.makeKeyAndOrderFront(nil)
     }
 
     private func positionOnMouseScreen(_ w: NSWindow) {
@@ -728,22 +733,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = VirtualScreen.shared.turnOn()
         }
 
-        let background = CommandLine.arguments.contains("--background")
-
-        if background {
-            // 开机自启：恢复自动重连（清掉上次可能残留的暂停标记），窗口不弹出来
+        // 开机自启也把面板弹出来。之前这里是 orderOut 藏窗口，
+        // 但那时菜单栏没有图标，藏完就彻底没入口了，只剩 Dock 里一个图标。
+        if CommandLine.arguments.contains("--background") {
+            // 恢复自动重连（清掉上次可能残留的暂停标记）
             try? FileManager.default.removeItem(atPath: pauseFile)
-            DispatchQueue.main.async {
-                NSApp.windows.forEach { $0.orderOut(nil) }
-            }
-            return
         }
 
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.async { [weak self] in
-            guard let w = NSApp.windows.first else { return }
-            self?.positionOnMouseScreen(w)
-            w.makeKeyAndOrderFront(nil)
+            self?.showPanel()
         }
     }
 }
@@ -762,5 +761,12 @@ struct SidecarApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
         }
+
+        // 菜单栏图标：点一下弹出面板。v2.0 只有 Dock 图标，菜单栏上是空的。
+        MenuBarExtra("iPad 随航", systemImage: "ipad.landscape") {
+            ContentView()
+                .environmentObject(state)
+        }
+        .menuBarExtraStyle(.window)
     }
 }

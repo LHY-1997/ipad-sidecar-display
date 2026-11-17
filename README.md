@@ -7,7 +7,7 @@
 适合固定工位：iPad 架在支架上当主屏，Mac mini 藏在桌下，每天开机自动连上，人走开自动不连。
 
 <p align="center">
-  <img src="docs/panel.png" alt="iPad 随航控制面板：已连接 iPad Pro、已设为主屏、虚拟屏开启、自动重连 10 秒、三条就绪日志、左下角版本号 v2.0" width="280">
+  <img src="docs/panel.png" alt="iPad 随航控制面板：已连接 iPad Pro、已设为主屏、虚拟屏开启、自动重连 10 秒、三条就绪日志、左下角版本号 v2.1" width="280">
 </p>
 
 <p align="center">
@@ -31,7 +31,7 @@ macOS 的随航（Sidecar）功能本身很好用，但把它当**主显示器**
 - **自动连接**：开机自启，人回到电脑前自动连上，并设为主显示器
 - **人不在就不连**：熄屏、锁屏、长时间无操作且无音频 → 不发起任何连接，从根上消除弹窗
 - **弹窗兜底**：万一真失败，弹窗进程会在十秒内被清掉
-- **菜单栏控制**：手动连接、断开、暂停守护
+- **菜单栏图标**：常驻菜单栏，点一下弹出面板（v2.1 起）。面板里手动连接、断开、暂停自动重连
 - **自带 5K HiDPI 虚拟屏**：面板进程里直接建一块 2560×1440 逻辑 / 5120×2880 物理的假屏，无头 Mac mini 开机就有画面，不用装 BetterDisplay
 - **虚拟屏开关**：面板里一键开关，默认开启；关掉会提示会丢随航
 - **面板挂了自动拉起**：虚拟屏由面板进程持有，watchdog 每 10 秒看一眼，面板不在了就重新拉起并重建虚拟屏（实测 kill -9 后 7 秒恢复）
@@ -42,7 +42,7 @@ macOS 的随航（Sidecar）功能本身很好用，但把它当**主显示器**
 
 ### 下载即用
 
-从 [Releases](https://github.com/nishtica/ipad-sidecar-display/releases/latest) 下载 `iPad-Sidecar-Display-2.0.zip`，解压后**右键点击 `安装.command`** 选「打开」。
+从 [Releases](https://github.com/nishtica/ipad-sidecar-display/releases/latest) 下载 `iPad-Sidecar-Display-2.1.zip`，解压后**右键点击 `安装.command`** 选「打开」。
 
 > 为什么是右键？脚本没有 Apple 开发者签名，macOS 第一次会拦。右键选「打开」会多出「打开」按钮，点它就行。
 
@@ -56,11 +56,11 @@ cd ipad-sidecar-display
 ./build.sh
 ```
 
-产出 `iPad-Sidecar-Display-2.0.zip`，解压后同样双击 `安装.command`。
+产出 `iPad-Sidecar-Display-2.1.zip`，解压后同样双击 `安装.command`。
 
 需要 macOS 13+ 和 Xcode 命令行工具（`xcode-select --install`）。
 
-**改版本号只改一处**：`build.sh` 顶部的 `VERSION`。zip 文件名和 app 的 `Info.plist` 都引用它，`CFBundleVersion` 自动取去掉小数点的形式（`2.0` → `20`）。面板左下角显示的 `v2.0` 是运行时从 `Info.plist` 读的，不用另外维护。
+**改版本号只改一处**：`build.sh` 顶部的 `VERSION`。zip 文件名和 app 的 `Info.plist` 都引用它，`CFBundleVersion` 自动取去掉小数点的形式（`2.1` → `21`）。面板左下角显示的 `v2.1` 是运行时从 `Info.plist` 读的，不用另外维护。
 
 ## 工作原理
 
