@@ -54,7 +54,7 @@ cd ipad-sidecar-display
 ./build.sh
 ```
 
-产出 `iPad随航工具集-2.0.zip`，解压后同样双击 `安装.command`。
+产出 `iPad-Sidecar-Display-2.0.zip`，解压后同样双击 `安装.command`。
 
 需要 macOS 13+ 和 Xcode 命令行工具（`xcode-select --install`）。
 

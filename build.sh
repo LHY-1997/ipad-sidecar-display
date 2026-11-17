@@ -10,7 +10,9 @@ APP_NAME="iPad随航.app"
 # ===== 版本号唯一来源：改这里，zip 名和 Info.plist 一起变 =====
 VERSION="2.0"
 BUILD_NUM="${VERSION//./}"      # 2.0 → 20，CFBundleVersion 要纯数字
-ZIP_NAME="iPad随航工具集-${VERSION}.zip"
+# zip 名必须是纯 ASCII：GitHub 上传 Release 附件时会剥掉中文字符
+# （实测 "iPad随航工具集-2.0.zip" 会被存成 "iPad.-2.0.zip"）
+ZIP_NAME="iPad-Sidecar-Display-${VERSION}.zip"
 MIN_MACOS="13.0"
 
 say() { printf "\033[1;34m▸\033[0m %s\n" "$1"; }

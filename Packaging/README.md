@@ -35,7 +35,7 @@
 或者终端里跑：
 
 ```bash
-xattr -dr com.apple.quarantine ~/Downloads/iPad随航工具集
+xattr -dr com.apple.quarantine ~/Downloads/iPad-Sidecar-Display-2.0
 ```
 
 ---
