@@ -22,6 +22,8 @@
 
 **装完检查**：屏幕右上角菜单栏出现 iPad 图标 → 成功。
 
+> **如果终端报「安装包不完整，缺少 payload」**：说明你拿到的不是安装包，而是源码包（GitHub 上的 `Code → Download ZIP` 或 `Source code (zip)`）。源码包里只有代码，没有编译好的程序，装不了。请回到 Releases 页面，在 Assets 里下载 `iPad-Sidecar-Display-x.x.zip`。正常的安装包解压出来会有一个 `payload` 文件夹。
+
 ---
 
 ### 如果双击没反应
@@ -35,7 +37,7 @@
 或者终端里跑：
 
 ```bash
-xattr -dr com.apple.quarantine ~/Downloads/iPad-Sidecar-Display-2.1
+xattr -dr com.apple.quarantine ~/Downloads/iPad-Sidecar-Display-2.2
 ```
 
 ---

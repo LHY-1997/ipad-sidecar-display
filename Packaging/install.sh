@@ -28,10 +28,17 @@ fi
 ok "macOS $OS_VER"
 
 ARCH=$(uname -m)
-ok "架构 $ARCH（安装包同时支持 Apple Silicon 和 Intel）"
+ok "架构 ${ARCH}（安装包同时支持 Apple Silicon 和 Intel）"
 
 if [ ! -f "payload/$BIN_NAME" ] || [ ! -d "payload/$APP_NAME" ]; then
     err "安装包不完整，缺少 payload"
+    echo ""
+    printf "  如果你是从 GitHub 首页点绿色 Code → Download ZIP，或者在 Release 页面\n"
+    printf "  底部点 Source code (zip)，那是源码包——里面只有代码，没有编译好的程序，装不了。\n"
+    printf "  请到 Releases 下载真正的安装包：\n"
+    printf "    https://github.com/nishtica/ipad-sidecar-display/releases/latest\n"
+    echo ""
+    printf "  如果你只把「安装.command」单独拷了出来，请放回解压出来的整个文件夹再运行。\n"
     exit 1
 fi
 ok "安装包完整"
