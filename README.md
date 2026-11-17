@@ -1,8 +1,8 @@
 # iPad Sidecar Display
 
-把 iPad 变成 Mac 的主显示器，自动连接，失败不弹窗。
+把 iPad 变成 Mac 的主显示器，自动连接，失败不弹窗，**自带虚拟屏，不依赖 BetterDisplay**。
 
-**English:** Turn your iPad into a Mac's primary display — auto-connect when you're at the desk, silent cleanup of the `-1010` connection-failure popup, and no manual Screen Mirroring clicks every morning.
+**English:** Turn your iPad into a Mac's primary display — auto-connect when you're at the desk, silent cleanup of the `-1010` connection-failure popup, no manual Screen Mirroring clicks every morning, and a built-in 5K HiDPI virtual display so you can drop BetterDisplay entirely.
 
 适合固定工位：iPad 架在支架上当主屏，Mac mini 藏在桌下，每天开机自动连上，人走开自动不连。
 
@@ -32,6 +32,10 @@ macOS 的随航（Sidecar）功能本身很好用，但把它当**主显示器**
 - **人不在就不连**：熄屏、锁屏、长时间无操作且无音频 → 不发起任何连接，从根上消除弹窗
 - **弹窗兜底**：万一真失败，弹窗进程会在十秒内被清掉
 - **菜单栏控制**：手动连接、断开、暂停守护
+- **自带 5K HiDPI 虚拟屏**：面板进程里直接建一块 2560×1440 逻辑 / 5120×2880 物理的假屏，无头 Mac mini 开机就有画面，不用装 BetterDisplay
+- **虚拟屏开关**：面板里一键开关，默认开启；关掉会提示会丢随航
+- **面板挂了自动拉起**：虚拟屏由面板进程持有，watchdog 每 10 秒看一眼，面板不在了就重新拉起并重建虚拟屏（实测 kill -9 后 7 秒恢复）
+- **轻量**：不额外跑进程，整套只有 watchdog + 面板（BetterDisplay 光建假屏就占 88 MB）
 - **通用二进制**：Apple Silicon 和 Intel 都支持
 
 ## 安装
@@ -53,6 +57,8 @@ cd ipad-sidecar-display
 产出 `iPad随航工具集-2.0.zip`，解压后同样双击 `安装.command`。
 
 需要 macOS 13+ 和 Xcode 命令行工具（`xcode-select --install`）。
+
+**改版本号只改一处**：`build.sh` 顶部的 `VERSION`。zip 文件名和 app 的 `Info.plist` 都引用它，`CFBundleVersion` 自动取去掉小数点的形式（`2.0` → `20`）。面板左下角显示的 `v2.0` 是运行时从 `Info.plist` 读的，不用另外维护。
 
 ## 工作原理
 
@@ -107,6 +113,67 @@ SidecarDisplayManager *mgr = [SidecarDisplayManager new];
 
 一次连接流程最长 35 秒（等回调 20 秒 + 等屏出现 15 秒），而 LaunchAgent 每 10 秒拉一个新进程。用 `flock` 锁住 `.lock` 文件，保证同时只有一个实例在跑。
 
+### 虚拟屏（内置在菜单栏面板里）
+
+无头 Mac mini 没有物理屏幕，开机后如果没有虚拟显示器，WindowServer 就没地方画桌面，随航也无从接管。
+
+传统做法是装 BetterDisplay，但它 88 MB 内存只为了建一块假屏。现在 `iPad随航.app` 自己在进程里调 `CGVirtualDisplay` 私有 API 建这块屏——不额外跑进程，也不用装 BetterDisplay。
+
+**开关在面板里，默认开启。** 关掉会弹警告：实测关掉虚拟屏后 iPad 随航会**当场断开**，系统退到一块 1920×1080 的兜底屏（1x，HiDPI 没了），十几秒后才自动重连回来。
+
+开关状态记在 `~/Library/Application Support/ipad-watchdog/vdisplay.off`：文件存在 = 关闭，不存在 = 开启。所以想强制恢复默认，删掉这个文件重启即可。
+
+四个私有类都在 **CoreGraphics** 里（不是 `CoreDisplay`）：
+
+```
+CGVirtualDisplay
+CGVirtualDisplayDescriptor
+CGVirtualDisplayMode
+CGVirtualDisplaySettings
+```
+
+系统 framework 在 dyld shared cache 里，磁盘上的文件只是 stub，`nm`/`strings` 读不到。要看谁导入了这些类，用：
+
+```bash
+dyld_info -imports /Applications/BetterDisplay.app/Contents/MacOS/BetterDisplay | grep VirtualDisplay
+```
+
+编译期不链接私有框架，运行时用 `NSClassFromString` + ObjC runtime 反射调用（跟 watchdog 处理 `SidecarCore` 是同一套路）。
+
+**HiDPI 的正确姿势**（踩坑最深的一处）：
+
+| 注册分辨率 | `setHiDPI` | 结果 |
+|---|---|---|
+| 5120×2880 | 1 | ❌ 逻辑=物理=5120，1x，UI 小到不可用，ioFlags `0x2000003` |
+| **2560×1440** | **1** | ✅ 系统自动派生 HiDPI，逻辑 2560 / 物理 5120，ioFlags `0x2000007` |
+
+也就是说，**注册逻辑分辨率，让系统去翻倍**，不是注册物理分辨率。
+
+另外 `CGDisplayCopyAllDisplayModes` 默认列表**不含** HiDPI 变体，必须传：
+
+```swift
+let opts = [kCGDisplayShowDuplicateLowResolutionModes as String: true] as CFDictionary
+```
+
+**必须由进程强引用持有**：`CGVirtualDisplay` 实例一销毁，虚拟屏立刻消失。菜单栏面板本来就是常驻进程，天然满足；`AppDelegate` 在 `applicationDidFinishLaunching` 里最早建屏，`AppState` 初始化时再兜一次（幂等）。
+
+**面板挂了怎么办**：虚拟屏跟着面板走，面板一崩虚拟屏立刻消失，系统退到 1920×1080 兜底屏、随航断开。所以 watchdog 每次运行开头会先 `ensurePanelRunning()`——面板不在就用 `open -a --args --background` 拉起来，虚拟屏随之重建。实测 `kill -9` 面板后 7 秒内恢复，iPad 9 秒内重连。
+
+区分「崩了」和「用户主动退出」靠 `panel.off`：面板的「退出」按钮在虚拟屏开着时会先弹警告（说明退出会连虚拟屏一起关掉、随航会断），确认后写 `panel.off` 再退出；下次面板启动时自动删掉这个标记。watchdog 看到 `panel.off` 就不干预。
+
+**旧版遗留的两个坑**（2.0 之前虚拟屏是独立进程 `ipad-vdisplay`，如果以后改回独立进程会再遇到）：
+
+1. `KeepAlive` 配 `SuccessfulExit=false` 时，进程收到 SIGTERM 后 `exit(0)` 会被判定为"正常完成"，launchd **不会重启**。信号处理器里要 `exit(1)`。
+2. `lipo` 拼接通用二进制会**丢失签名**，launchd 报 `OS_REASON_CODESIGNING` 拒绝启动。必须 `codesign --force -s -` 重签。
+
+实测参数（跟 BetterDisplay 建的屏逐字节一致）：
+
+```
+逻辑 2560×1440 / 物理 5120×2880 / 60Hz / ioFlags 0x2000007
+```
+
+分辨率写死在 `Sources/VirtualScreen.swift` 顶部的 `logicalW` / `logicalH`，改配置需重编译。
+
 ## 关于 -1010 和 -501
 
 弹窗里见过两个错误码：`-1010`（A miscellaneous error occurred）和 `-501`，都表示连不上。
@@ -131,6 +198,9 @@ SidecarDisplayManager *mgr = [SidecarDisplayManager new];
 | `target` | 指定优先连接的设备 UUID |
 | `quiet` | 静默时段，内容如 `2 7` 表示 02:00-07:00 不连接 |
 | `watchdog.log` | 日志，只在有事件时写 |
+| `vdisplay.log` | 虚拟屏日志（建屏、切 HiDPI、开关） |
+| `vdisplay.off` | 存在 = 虚拟屏被手动关闭，不存在 = 默认开启 |
+| `panel.off` | 存在 = 用户主动退出了面板，watchdog 不再拉起；重新打开面板会自动清掉 |
 
 自检：
 
@@ -148,6 +218,9 @@ SidecarDisplayManager *mgr = [SidecarDisplayManager new];
 - 使用私有框架 `SidecarCore`，macOS 大版本更新可能失效。失效表现：日志持续记「SidecarCore 加载失败」
 - app 是 adhoc 签名，首次打开会被 Gatekeeper 拦，需要右键打开
 - 静音看视频超过 30 分钟会被判定为"人不在"，碰一下鼠标即恢复
+- 虚拟屏用私有 API `CGVirtualDisplay`（来自 CoreGraphics），macOS 大版本更新可能失效。失效表现：`vdisplay.log` 记「私有类缺失」
+- 虚拟屏分辨率写死在 `Sources/VirtualScreen.swift` 顶部（`logicalW` / `logicalH`），改配置需重编译
+- 关掉虚拟屏后随航会断开一次，系统退到 1920×1080 兜底屏，等十几秒自动重连
 - 只测过 iPad Pro 12.9"（M1）和 macOS 26/27，其他组合未验证
 
 ## License

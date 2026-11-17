@@ -7,7 +7,10 @@ ROOT="$(pwd)"
 BUILD="$ROOT/build"
 DIST="$BUILD/dist"
 APP_NAME="iPad随航.app"
-ZIP_NAME="iPad随航工具集-2.0.zip"
+# ===== 版本号唯一来源：改这里，zip 名和 Info.plist 一起变 =====
+VERSION="2.0"
+BUILD_NUM="${VERSION//./}"      # 2.0 → 20，CFBundleVersion 要纯数字
+ZIP_NAME="iPad随航工具集-${VERSION}.zip"
 MIN_MACOS="13.0"
 
 say() { printf "\033[1;34m▸\033[0m %s\n" "$1"; }
@@ -39,14 +42,19 @@ lipo -create "$BUILD/h-arm" "$BUILD/h-x86" -output "$DIST/payload/ipad-here"
 chmod +x "$DIST/payload/ipad-here"
 ok "ipad-here"
 
-# ---------- 3. 菜单栏 app ----------
+# ---------- 3. 菜单栏 app（内含虚拟屏）----------
 say "编译菜单栏面板（arm64 + x86_64）"
-swiftc -O -parse-as-library -target "arm64-apple-macos$MIN_MACOS" Sources/MenuBar.swift \
+swiftc -O -parse-as-library -target "arm64-apple-macos$MIN_MACOS" \
+    Sources/MenuBar.swift Sources/VirtualScreen.swift \
     -framework SwiftUI -framework AppKit -o "$BUILD/m-arm"
-swiftc -O -parse-as-library -target "x86_64-apple-macos$MIN_MACOS" Sources/MenuBar.swift \
+swiftc -O -parse-as-library -target "x86_64-apple-macos$MIN_MACOS" \
+    Sources/MenuBar.swift Sources/VirtualScreen.swift \
     -framework SwiftUI -framework AppKit -o "$BUILD/m-x86"
 lipo -create "$BUILD/m-arm" "$BUILD/m-x86" -output "$BUILD/menu-bar"
-ok "菜单栏面板"
+ok "菜单栏面板（含虚拟屏）"
+
+# 虚拟屏已合并进菜单栏 app（Sources/VirtualScreen.swift），
+# 不再单独编译 ipad-vdisplay 进程。Sources/VDisplay.swift 仅作历史参考保留。
 
 # ---------- 4. 组装 .app ----------
 say "组装 $APP_NAME"
@@ -55,7 +63,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BUILD/menu-bar" "$APP/Contents/MacOS/iPad随航"
 chmod +x "$APP/Contents/MacOS/iPad随航"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-cat > "$APP/Contents/Info.plist" <<'PLIST_EOF'
+cat > "$APP/Contents/Info.plist" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -66,8 +74,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST_EOF'
 	<key>CFBundleIdentifier</key><string>local.ipad.sidecar</string>
 	<key>CFBundleName</key><string>iPad随航</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
-	<key>CFBundleShortVersionString</key><string>2.0</string>
-	<key>CFBundleVersion</key><string>2</string>
+	<key>CFBundleShortVersionString</key><string>${VERSION}</string>
+	<key>CFBundleVersion</key><string>${BUILD_NUM}</string>
 	<key>LSMinimumSystemVersion</key><string>13.0</string>
 	<key>NSHighResolutionCapable</key><true/>
 </dict>
@@ -96,7 +104,7 @@ echo "────────────────────────�
 ls -lh "$ZIP_NAME"
 echo ""
 echo "验证架构："
-lipo -archs "$DIST/payload/ipad-watchdog" | sed 's/^/  ipad-watchdog: /'
-lipo -archs "$DIST/payload/ipad-here" | sed 's/^/  ipad-here:     /'
-lipo -archs "$APP/Contents/MacOS/iPad随航" | sed 's/^/  菜单栏面板:    /'
+lipo -archs "$DIST/payload/ipad-watchdog" | sed 's/^/  ipad-watchdog:  /'
+lipo -archs "$DIST/payload/ipad-here" | sed 's/^/  ipad-here:      /'
+lipo -archs "$APP/Contents/MacOS/iPad随航" | sed 's/^/  菜单栏面板:     /'
 echo "──────────────────────────────────────"

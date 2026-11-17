@@ -35,6 +35,40 @@ func loadTargetId() -> String {
         .trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
+// MARK: - 面板守护
+// 虚拟屏由菜单栏面板在进程内持有，面板一挂虚拟屏就没了，系统退到 1080p 兜底屏。
+// 这里每 10 秒兜一次：面板不在就拉起来，虚拟屏随之重建。
+// 用户主动关掉虚拟屏（vdisplay.off）或主动退出面板（panel.off）时不干预。
+
+let panelOffFile = base + "/panel.off"
+let panelApp = "/Applications/iPad随航.app"
+let panelBin = panelApp + "/Contents/MacOS/iPad随航"
+
+func panelRunning() -> Bool {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+    p.arguments = ["-f", panelBin]
+    p.standardOutput = FileHandle.nullDevice
+    p.standardError = FileHandle.nullDevice
+    guard (try? p.run()) != nil else { return true }   // 探测失败就当它在跑，别乱拉
+    p.waitUntilExit()
+    return p.terminationStatus == 0
+}
+
+func ensurePanelRunning() {
+    if FileManager.default.fileExists(atPath: panelOffFile) { return }
+    if panelRunning() { return }
+    guard FileManager.default.fileExists(atPath: panelApp) else { return }
+    log("面板进程不在，拉起（虚拟屏随之重建）")
+    let o = Process()
+    o.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+    o.arguments = ["-a", panelApp, "--args", "--background"]
+    o.standardOutput = FileHandle.nullDevice
+    o.standardError = FileHandle.nullDevice
+    try? o.run()
+    o.waitUntilExit()
+}
+
 // MARK: - 单实例锁
 // 一次连接流程最长要 35 秒（等回调 20 秒 + 等屏出现 15 秒），
 // 而 LaunchAgent 每 10 秒就拉一个新进程。不加锁的话会有 3-4 个实例
@@ -247,6 +281,9 @@ func connect(_ device: AnyObject) -> (ok: Bool, msg: String) {
 }
 
 // ===== 主流程 =====
+
+// 面板是虚拟屏的持有者，先确保它活着（暂停自动重连不影响这一步）
+ensurePanelRunning()
 
 if FileManager.default.fileExists(atPath: pauseFile) { exit(0) }
 

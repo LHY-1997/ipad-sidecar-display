@@ -9,6 +9,10 @@ let pauseFile = baseDir + "/pause"
 let logFile = baseDir + "/watchdog.log"
 let targetFile = baseDir + "/target"
 let intervalFile = baseDir + "/interval"
+/// 这个文件存在 = 用户主动关掉了虚拟屏；不存在 = 默认开启
+let vOffFile = baseDir + "/vdisplay.off"
+/// 用户主动退出面板时创建，watchdog 看到就不再把面板拉起来
+let panelOffFile = baseDir + "/panel.off"
 let watchdogPlist = NSHomeDirectory() + "/Library/LaunchAgents/com.local.ipad-watchdog.plist"
 
 struct DeviceInfo: Identifiable, Equatable {
@@ -175,6 +179,7 @@ final class AppState: ObservableObject {
     @Published var message = ""
     @Published var logs: [String] = []
     @Published var interval: Int = 30
+    @Published var virtualScreenOn = true
 
     private var timer: Timer?
 
@@ -185,6 +190,15 @@ final class AppState: ObservableObject {
 
     init() {
         interval = Self.readInterval()
+
+        // 虚拟屏：默认开启，只有 vdisplay.off 存在才算用户关过
+        let vOff = FileManager.default.fileExists(atPath: vOffFile)
+        virtualScreenOn = !vOff
+        if !vOff {
+            // AppDelegate 已经建过就幂等返回；这里兜底（比如窗口先于 delegate 求值）
+            _ = VirtualScreen.shared.turnOn()
+        }
+
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             self?.refresh()
@@ -338,6 +352,82 @@ final class AppState: ObservableObject {
         try? FileManager.default.removeItem(atPath: pauseFile)
     }
 
+    // MARK: 退出
+
+    /// 退出面板。虚拟屏由本进程持有，退出会连虚拟屏一起关掉，所以先问一句。
+    func quitApp() {
+        if virtualScreenOn {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "退出面板？"
+            alert.informativeText = """
+            虚拟屏由面板进程持有，退出面板会一并关掉虚拟屏：
+
+            • 系统会退到 1920×1080 兜底屏，随航随之断开
+            • 后台守护不会再把面板拉起来，要等下次登录或手动打开
+            • 只是不想看窗口的话，关掉窗口就行，不会退出
+
+            确定要退出吗？
+            """
+            alert.addButton(withTitle: "退出")
+            alert.addButton(withTitle: "取消")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        FileManager.default.createFile(atPath: panelOffFile, contents: nil)
+        NSApplication.shared.terminate(nil)
+    }
+
+    // MARK: 虚拟屏
+
+    /// 真正执行开关。关闭前必须由调用方确认过（走 requestVirtualScreenToggle）
+    func setVirtualScreen(_ on: Bool) {
+        if on {
+            try? FileManager.default.removeItem(atPath: vOffFile)
+            if VirtualScreen.shared.turnOn() != nil {
+                virtualScreenOn = true
+                message = "虚拟屏已开启"
+            } else {
+                virtualScreenOn = false
+                message = "虚拟屏创建失败，看 vdisplay.log"
+            }
+        } else {
+            try? "off".write(toFile: vOffFile, atomically: true, encoding: .utf8)
+            VirtualScreen.shared.turnOff()
+            virtualScreenOn = false
+            message = "虚拟屏已关闭"
+        }
+        refresh()
+    }
+
+    /// 界面开关入口：关的时候先弹警告
+    func requestVirtualScreenToggle(_ on: Bool) {
+        if on {
+            setVirtualScreen(true)
+            return
+        }
+        guard virtualScreenOn else { return }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "关闭虚拟屏？"
+        alert.informativeText = """
+        虚拟屏是随航的落脚点。关掉之后：
+
+        • 系统会退到一块 1920×1080 的兜底屏，分辨率掉一半，HiDPI 没了
+        • 随航大概率当场断开（实测会断），要等自动重连或手动点「连接随航」
+        • 没有实体屏、也没接 HDMI 欺骗器时，重启后可能连兜底屏都没有，画面彻底消失
+        • 恢复办法：重新打开这个开关，或删掉 vdisplay.off 后重启
+
+        确定要关闭吗？
+        """
+        alert.addButton(withTitle: "关闭虚拟屏")
+        alert.addButton(withTitle: "取消")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            setVirtualScreen(false)
+        }
+    }
+
     // MARK: 重连间隔
 
     /// 读用户选的间隔，默认 30 秒
@@ -459,6 +549,18 @@ struct ContentView: View {
                 infoRow("主屏", s.isMain ? "iPad Pro" : "其他屏幕", s.isMain ? .green : .secondary)
 
                 HStack(spacing: 4) {
+                    Text("虚拟屏").foregroundColor(.secondary)
+                    Spacer()
+                    Toggle("", isOn: Binding(
+                        get: { s.virtualScreenOn },
+                        set: { s.requestVirtualScreenToggle($0) }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                }
+
+                HStack(spacing: 4) {
                     Text("自动重连").foregroundColor(.secondary)
                     Spacer()
                     if s.watchdogPaused {
@@ -553,17 +655,15 @@ struct ContentView: View {
             Divider()
 
             HStack {
-                Button("打开工具目录") {
-                    NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory() + "/Coze/Drive/杂事问答/tools/set-ipad-main"))
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
+                // 版本号从 Info.plist 读，build.sh 改一处这里自动跟上
+                Text("v" + appVersion)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
 
                 Spacer()
 
                 Button("退出") {
-                    NSApplication.shared.terminate(nil)
+                    s.quitApp()
                 }
                 .buttonStyle(.plain)
                 .font(.system(size: 10))
@@ -572,6 +672,11 @@ struct ContentView: View {
         }
         .padding(12)
         .frame(width: 250)
+    }
+
+    /// 从 Info.plist 读版本号
+    var appVersion: String {
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "?"
     }
 
     func infoRow(_ k: String, _ v: String, _ color: Color) -> some View {
@@ -614,6 +719,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 面板起来了，清掉上次的主动退出标记，让 watchdog 恢复守护
+        try? FileManager.default.removeItem(atPath: panelOffFile)
+
+        // 最早时机建虚拟屏：无头 Mac 开机时系统可能一块屏都没有，
+        // 越早建出落脚点，WindowServer 和随航越早有着落
+        if !FileManager.default.fileExists(atPath: vOffFile) {
+            _ = VirtualScreen.shared.turnOn()
+        }
+
         let background = CommandLine.arguments.contains("--background")
 
         if background {
