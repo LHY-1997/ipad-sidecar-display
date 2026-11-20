@@ -249,12 +249,20 @@ func physicalDisplay() -> CGDirectDisplayID? {
     }
 }
 
-/// 虚拟屏永远不当主屏：主屏若落在虚拟屏上，让给实体屏，其次 iPad。
-/// 主屏本来就是实体屏或 iPad 时一律不动——那是用户自己的选择。
+/// 确立主屏归属，返回是否真的动过。规则分两种：
+/// - 有实体屏：只在主屏落到虚拟屏上时纠正，实体屏和 iPad 之间由用户自己选
+/// - 没有实体屏：iPad 存在就必须当主屏（虚拟屏永远不能占）
 @discardableResult
-func rescueMainFromVirtual() -> Bool {
-    guard mainIsVirtual() else { return false }
-    guard let target = physicalDisplay() ?? findIPad() else { return false }
+func enforceMain() -> Bool {
+    let phys = physicalDisplay()
+    guard let target = phys ?? findIPad() else { return false }
+    if phys != nil {
+        guard mainIsVirtual() else { return false }
+    } else {
+        // 没实体屏，iPad 是唯一合法主屏，只要不在它身上就切过去
+        let alreadyMain = CGDisplayIsMain(target) != 0 && CGDisplayBounds(target).origin == .zero
+        guard !alreadyMain else { return false }
+    }
     return makeMain(target)
 }
 
@@ -328,10 +336,10 @@ if hasPopupWindow() { squashPopup() }
 // 熄屏、锁屏、或长时间无操作且无音频，都算不在。
 if !userIsHere() { exit(0) }
 
-// 2) 屏已经在 → 只在虚拟屏占着主屏时纠正
-// 主屏是实体屏还是 iPad 由用户决定，watchdog 不抢
+// 2) 屏已经在 → 按规则校正主屏归属
+// 有实体屏时实体屏/iPad 由用户决定；没有实体屏时 iPad 必须在主屏位
 if findIPad() != nil {
-    if rescueMainFromVirtual() { log("主屏被虚拟屏占用，已切回实体屏") }
+    if enforceMain() { log("主屏已归位") }
     exit(0)
 }
 
@@ -355,9 +363,9 @@ if !r.ok {
 let dl = Date().addingTimeInterval(15)
 while Date() < dl {
     if findIPad() != nil {
-        // 连上之后不抢主屏：用户想用 iPad 当主屏时自己点「设 iPad 为主屏」
-        if rescueMainFromVirtual() {
-            log("随航已就绪，主屏被虚拟屏占用，已切回实体屏")
+        // 连上之后按规则定主屏：有实体屏时由用户选，没有实体屏则 iPad 必须在主屏位
+        if enforceMain() {
+            log("随航已就绪，主屏已归位")
         } else {
             log("随航已就绪，保持当前主屏")
         }

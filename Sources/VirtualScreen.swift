@@ -175,11 +175,11 @@ final class VirtualScreen {
             _ = self.applyHiDPIMode(did)
 
             // 虚拟屏建出来常落在原点，顺手把主屏抢走。
-            // 等模式切换稳定后再让回去，交给实体屏（没有实体屏就给 iPad）。
+            // 等模式切换稳定后按规则归位：有实体屏给实体屏，没有实体屏给 iPad。
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
                 guard let self, self.held != nil else { return }
-                if Displays.kickVirtualOffMain() {
-                    vlog("↩️ 虚拟屏占用了主屏，已让给实体屏/iPad")
+                if Displays.enforceMain() {
+                    vlog("↩️ 虚拟屏建好后主屏已归位（实体屏优先，没有则 iPad）")
                 }
             }
         }

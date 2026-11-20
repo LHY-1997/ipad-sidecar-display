@@ -193,11 +193,19 @@ enum Displays {
         return isVirtual(m)
     }
 
-    /// 虚拟屏永远不当主屏：主屏若落在虚拟屏上，让给实体屏或 iPad。
+    /// 确立主屏归属，返回是否真的动过。规则分两种：
+    /// - 有实体屏：只在主屏落到虚拟屏上时纠正，实体屏和 iPad 之间由用户自己选
+    /// - 没有实体屏：iPad 存在就必须当主屏（虚拟屏永远不能占）
     /// 只剩虚拟屏一块时无解，返回 false 不动。
     @discardableResult
-    static func kickVirtualOffMain() -> Bool {
-        guard mainIsVirtual(), let target = mainCandidate() else { return false }
+    static func enforceMain() -> Bool {
+        guard let target = mainCandidate() else { return false }
+        if physical() != nil {
+            guard mainIsVirtual() else { return false }
+        } else {
+            // 没实体屏，iPad 是唯一合法主屏，只要不在它身上就切过去
+            guard !isMain(target) else { return false }
+        }
         return makeMain(target)
     }
 }
@@ -293,14 +301,12 @@ final class AppState: ObservableObject {
         if nowConnected != connected { connected = nowConnected }
         if nowMain != isMain { isMain = nowMain }
 
-        // 虚拟屏永远不当主屏：随航断开、插拔屏、系统重排都可能把它顶上去，这里兜住
+        // 主屏归属：有实体屏就守住不让虚拟屏占；没实体屏则 iPad 必须在主屏位
         let onVirtual = Displays.mainIsVirtual()
         if onVirtual != mainOnVirtual { mainOnVirtual = onVirtual }
-        if onVirtual, Date().timeIntervalSince(lastKickAt) > 3 {
+        if Date().timeIntervalSince(lastKickAt) > 3, Displays.enforceMain() {
             lastKickAt = Date()
-            if Displays.kickVirtualOffMain() {
-                vlog("↩️ 主屏被虚拟屏占用，已切回实体屏/iPad")
-            }
+            vlog("↩️ 主屏已归位（有实体屏给实体屏，没有则给 iPad）")
         }
 
         let devs = Sidecar.devices()
