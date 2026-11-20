@@ -355,7 +355,7 @@ if !r.ok {
 let dl = Date().addingTimeInterval(15)
 while Date() < dl {
     if findIPad() != nil {
-        // 连上之后不抢主屏：用户想用 iPad 当主屏时自己点「设为主屏」
+        // 连上之后不抢主屏：用户想用 iPad 当主屏时自己点「设 iPad 为主屏」
         if rescueMainFromVirtual() {
             log("随航已就绪，主屏被虚拟屏占用，已切回实体屏")
         } else {

@@ -7,7 +7,7 @@
 适合固定工位：iPad 架在支架上当主屏，Mac mini 藏在桌下，每天开机自动连上，人走开自动不连。
 
 <p align="center">
-  <img src="docs/panel.png" alt="iPad 随航控制面板：已连接 iPad Pro、已设为主屏、虚拟屏开启、自动重连 10 秒、三条就绪日志、左下角版本号 v2.3" width="280">
+  <img src="docs/panel.png" alt="iPad 随航控制面板：已连接 iPad Pro、已设 iPad 为主屏、虚拟屏开启、自动重连 10 秒、三条就绪日志、左下角版本号 v2.3" width="280">
 </p>
 
 <p align="center">
@@ -86,7 +86,7 @@ SidecarDisplayManager *mgr = [SidecarDisplayManager new];
 | 屏幕 | 能不能当主屏 |
 |---|---|
 | 实体屏 | ✅ 默认 |
-| iPad 随航屏 | ✅ 可以，但要手动点「设为主屏」 |
+| iPad 随航屏 | ✅ 可以，但要手动点「设 iPad 为主屏」 |
 | 虚拟屏 | ❌ 永远不行 |
 
 虚拟屏是随航的落脚点，它一建出来默认落在原点，会把主屏抢走。所以两处都做了守护：

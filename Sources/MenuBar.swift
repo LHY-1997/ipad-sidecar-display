@@ -681,7 +681,7 @@ struct ContentView: View {
                     Button {
                         s.setMain()
                     } label: {
-                        Text("设为主屏").frame(maxWidth: .infinity)
+                        Text("设 iPad 为主屏").frame(maxWidth: .infinity)
                     }
                     .disabled(s.isMain)
                 }
