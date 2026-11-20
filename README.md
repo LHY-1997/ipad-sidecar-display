@@ -7,7 +7,7 @@
 适合固定工位：iPad 架在支架上当主屏，Mac mini 藏在桌下，每天开机自动连上，人走开自动不连。
 
 <p align="center">
-  <img src="docs/panel.png" alt="iPad 随航控制面板：已连接 iPad Pro、已设为主屏、虚拟屏开启、自动重连 10 秒、三条就绪日志、左下角版本号 v2.2" width="280">
+  <img src="docs/panel.png" alt="iPad 随航控制面板：已连接 iPad Pro、已设为主屏、虚拟屏开启、自动重连 10 秒、三条就绪日志、左下角版本号 v2.3" width="280">
 </p>
 
 <p align="center">
@@ -42,9 +42,9 @@ macOS 的随航（Sidecar）功能本身很好用，但把它当**主显示器**
 
 ### 下载即用
 
-从 [Releases](https://github.com/nishtica/ipad-sidecar-display/releases/latest) 下载 `iPad-Sidecar-Display-2.2.zip`，解压后**右键点击 `安装.command`** 选「打开」。
+从 [Releases](https://github.com/nishtica/ipad-sidecar-display/releases/latest) 下载 `iPad-Sidecar-Display-2.3.zip`，解压后**右键点击 `安装.command`** 选「打开」。
 
-> **别点绿色的 Code 按钮。** GitHub 首页的 `Code → Download ZIP`、Release 页面底部的 `Source code (zip)` 都是**源码包**，里面只有代码、没有编译好的程序，装不了——运行 `安装.command` 会报「缺少 payload」。认准 Releases 里 Assets 下的 `iPad-Sidecar-Display-2.2.zip`，解压出来应该有一个 `payload` 文件夹，里面有 `iPad随航.app`。
+> **别点绿色的 Code 按钮。** GitHub 首页的 `Code → Download ZIP`、Release 页面底部的 `Source code (zip)` 都是**源码包**，里面只有代码、没有编译好的程序，装不了——运行 `安装.command` 会报「缺少 payload」。认准 Releases 里 Assets 下的 `iPad-Sidecar-Display-2.3.zip`，解压出来应该有一个 `payload` 文件夹，里面有 `iPad随航.app`。
 
 > 为什么是右键？脚本没有 Apple 开发者签名，macOS 第一次会拦。右键选「打开」会多出「打开」按钮，点它就行。
 
@@ -58,11 +58,11 @@ cd ipad-sidecar-display
 ./build.sh
 ```
 
-产出 `iPad-Sidecar-Display-2.2.zip`，解压后同样双击 `安装.command`。
+产出 `iPad-Sidecar-Display-2.3.zip`，解压后同样双击 `安装.command`。
 
 需要 macOS 13+ 和 Xcode 命令行工具（`xcode-select --install`）。
 
-**改版本号只改一处**：`build.sh` 顶部的 `VERSION`。zip 文件名和 app 的 `Info.plist` 都引用它，`CFBundleVersion` 自动取去掉小数点的形式（`2.2` → `22`）。面板左下角显示的 `v2.2` 是运行时从 `Info.plist` 读的，不用另外维护。
+**改版本号只改一处**：`build.sh` 顶部的 `VERSION`。zip 文件名和 app 的 `Info.plist` 都引用它，`CFBundleVersion` 自动取去掉小数点的形式（`2.3` → `23`）。面板左下角显示的 `v2.3` 是运行时从 `Info.plist` 读的，不用另外维护。
 
 ## 工作原理
 
@@ -78,6 +78,25 @@ SidecarDisplayManager *mgr = [SidecarDisplayManager new];
 设主屏用 CoreGraphics：主屏 = 原点在 (0,0)，把所有显示器整体平移，相对布局不变。
 
 识别 iPad 靠 `CGDisplayModelNumber == 0x69506164`（ASCII 即 "iPad"）。
+
+### 主屏归属规则
+
+三块屏的优先级是定死的：
+
+| 屏幕 | 能不能当主屏 |
+|---|---|
+| 实体屏 | ✅ 默认 |
+| iPad 随航屏 | ✅ 可以，但要手动点「设为主屏」 |
+| 虚拟屏 | ❌ 永远不行 |
+
+虚拟屏是随航的落脚点，它一建出来默认落在原点，会把主屏抢走。所以两处都做了守护：
+
+- **面板**：`AppState.refresh()` 每 2 秒检查一次，主屏在虚拟屏上就立刻让给实体屏（没有实体屏则给 iPad）
+- **watchdog**：每 10 秒一轮，同样只在虚拟屏占着主屏时纠正
+
+**watchdog 不再抢主屏。** v2.2 之前它每 10 秒无条件把 iPad 设为主屏，用户手动切回实体屏后会被抢回去。v2.3 改成：主屏是实体屏还是 iPad 完全由用户决定，watchdog 只在主屏落到虚拟屏上时才动手。
+
+面板上的「主屏切回实体屏」按钮：主屏在虚拟屏上（异常）或 iPad 当主屏时出现，一键还给实体屏。
 
 ### 判断"人在不在"
 

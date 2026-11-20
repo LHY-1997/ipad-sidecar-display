@@ -6,6 +6,8 @@ import IOKit
 import Darwin
 
 let IPAD_MODEL: UInt32 = 0x69506164
+/// 虚拟屏的 vendorID，和 VirtualScreen.swift 里注册的一致
+let VIRTUAL_VENDOR: UInt32 = 0x1A2B
 let base = NSHomeDirectory() + "/Library/Application Support/ipad-watchdog"
 let pauseFile = base + "/pause"
 let logFile = base + "/watchdog.log"
@@ -226,6 +228,36 @@ func makeMain(_ ipad: CGDirectDisplayID) -> Bool {
     return CGCompleteDisplayConfiguration(cfg, .permanently) == .success
 }
 
+/// 当前主屏是不是虚拟屏
+func mainIsVirtual() -> Bool {
+    var n: UInt32 = 0
+    CGGetActiveDisplayList(0, nil, &n)
+    var ids = [CGDirectDisplayID](repeating: 0, count: Int(n))
+    CGGetActiveDisplayList(n, &ids, &n)
+    guard let m = ids.first(where: { CGDisplayIsMain($0) != 0 }) else { return false }
+    return CGDisplayVendorNumber(m) == VIRTUAL_VENDOR
+}
+
+/// 实体屏：既不是虚拟屏，也不是 iPad 随航屏
+func physicalDisplay() -> CGDirectDisplayID? {
+    var n: UInt32 = 0
+    CGGetActiveDisplayList(0, nil, &n)
+    var ids = [CGDirectDisplayID](repeating: 0, count: Int(n))
+    CGGetActiveDisplayList(n, &ids, &n)
+    return ids.first {
+        CGDisplayVendorNumber($0) != VIRTUAL_VENDOR && CGDisplayModelNumber($0) != IPAD_MODEL
+    }
+}
+
+/// 虚拟屏永远不当主屏：主屏若落在虚拟屏上，让给实体屏，其次 iPad。
+/// 主屏本来就是实体屏或 iPad 时一律不动——那是用户自己的选择。
+@discardableResult
+func rescueMainFromVirtual() -> Bool {
+    guard mainIsVirtual() else { return false }
+    guard let target = physicalDisplay() ?? findIPad() else { return false }
+    return makeMain(target)
+}
+
 /// 返回：-1 组件加载失败，0 设备不可见，1 有设备
 func probeDevices() -> (state: Int, device: AnyObject?, msg: String) {
     guard dlopen("/System/Library/PrivateFrameworks/SidecarCore.framework/SidecarCore", RTLD_NOW) != nil,
@@ -296,10 +328,11 @@ if hasPopupWindow() { squashPopup() }
 // 熄屏、锁屏、或长时间无操作且无音频，都算不在。
 if !userIsHere() { exit(0) }
 
-// 2) 屏已经在 → 只需校正主屏
-if let ipad = findIPad() {
-    if makeMain(ipad) { exit(0) }
-    log("主屏修正失败"); exit(0)
+// 2) 屏已经在 → 只在虚拟屏占着主屏时纠正
+// 主屏是实体屏还是 iPad 由用户决定，watchdog 不抢
+if findIPad() != nil {
+    if rescueMainFromVirtual() { log("主屏被虚拟屏占用，已切回实体屏") }
+    exit(0)
 }
 
 // 3) 屏不在，看设备
@@ -321,9 +354,13 @@ if !r.ok {
 // 6) 等屏出现，期间继续盯弹窗
 let dl = Date().addingTimeInterval(15)
 while Date() < dl {
-    if let ipad = findIPad() {
-        _ = makeMain(ipad)
-        log("随航已就绪，iPad 主屏")
+    if findIPad() != nil {
+        // 连上之后不抢主屏：用户想用 iPad 当主屏时自己点「设为主屏」
+        if rescueMainFromVirtual() {
+            log("随航已就绪，主屏被虚拟屏占用，已切回实体屏")
+        } else {
+            log("随航已就绪，保持当前主屏")
+        }
         exit(0)
     }
     if hasPopupWindow() {

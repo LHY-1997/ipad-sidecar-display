@@ -162,6 +162,44 @@ enum Displays {
         }
         return CGCompleteDisplayConfiguration(cfg, .permanently) == .success
     }
+
+    // MARK: 虚拟屏 / 实体屏
+
+    /// 虚拟屏的 vendorID，和 VirtualScreen.swift 里注册的一致
+    static let VIRTUAL_VENDOR: UInt32 = 0x1A2B
+
+    static func isVirtual(_ id: CGDirectDisplayID) -> Bool {
+        CGDisplayVendorNumber(id) == VIRTUAL_VENDOR
+    }
+
+    static func isIPad(_ id: CGDirectDisplayID) -> Bool {
+        CGDisplayModelNumber(id) == IPAD_MODEL
+    }
+
+    /// 实体屏：既不是虚拟屏，也不是 iPad 随航屏
+    static func physical() -> CGDirectDisplayID? {
+        ids().first { !isVirtual($0) && !isIPad($0) }
+    }
+
+    /// 主屏的合法候选：实体屏优先，其次 iPad。虚拟屏永远不在候选里。
+    static func mainCandidate() -> CGDirectDisplayID? {
+        if let p = physical() { return p }
+        return ids().first { isIPad($0) }
+    }
+
+    /// 当前主屏是不是虚拟屏
+    static func mainIsVirtual() -> Bool {
+        guard let m = ids().first(where: { CGDisplayIsMain($0) != 0 }) else { return false }
+        return isVirtual(m)
+    }
+
+    /// 虚拟屏永远不当主屏：主屏若落在虚拟屏上，让给实体屏或 iPad。
+    /// 只剩虚拟屏一块时无解，返回 false 不动。
+    @discardableResult
+    static func kickVirtualOffMain() -> Bool {
+        guard mainIsVirtual(), let target = mainCandidate() else { return false }
+        return makeMain(target)
+    }
 }
 
 // MARK: - 状态
@@ -169,6 +207,7 @@ enum Displays {
 final class AppState: ObservableObject {
     @Published var connected = false
     @Published var isMain = false
+    @Published var mainOnVirtual = false
     @Published var deviceVisible = false
     @Published var deviceName = ""
     @Published var devices: [DeviceInfo] = []
@@ -180,6 +219,9 @@ final class AppState: ObservableObject {
     @Published var logs: [String] = []
     @Published var interval: Int = 30
     @Published var virtualScreenOn = true
+
+    /// 上一次把主屏从虚拟屏抢回来的时间，用于防抖（系统自己也会重排显示器，别打架）
+    private var lastKickAt = Date.distantPast
 
     private var timer: Timer?
 
@@ -250,6 +292,16 @@ final class AppState: ObservableObject {
         let nowMain = ipad.map { Displays.isMain($0) } ?? false
         if nowConnected != connected { connected = nowConnected }
         if nowMain != isMain { isMain = nowMain }
+
+        // 虚拟屏永远不当主屏：随航断开、插拔屏、系统重排都可能把它顶上去，这里兜住
+        let onVirtual = Displays.mainIsVirtual()
+        if onVirtual != mainOnVirtual { mainOnVirtual = onVirtual }
+        if onVirtual, Date().timeIntervalSince(lastKickAt) > 3 {
+            lastKickAt = Date()
+            if Displays.kickVirtualOffMain() {
+                vlog("↩️ 主屏被虚拟屏占用，已切回实体屏/iPad")
+            }
+        }
 
         let devs = Sidecar.devices()
         let vis = !devs.isEmpty
@@ -334,6 +386,20 @@ final class AppState: ObservableObject {
             return
         }
         message = Displays.makeMain(ipad) ? "已把 iPad 设为主屏" : "设置失败"
+        refresh()
+    }
+
+    /// 把主屏还给实体屏。没有实体屏时退回 iPad，两者都没有就不动。
+    func setMainToPhysical() {
+        guard let target = Displays.mainCandidate() else {
+            message = "没有可用的实体屏或 iPad"
+            return
+        }
+        if Displays.makeMain(target) {
+            message = Displays.isIPad(target) ? "已把 iPad 设为主屏" : "已把主屏切回实体屏"
+        } else {
+            message = "设置失败"
+        }
         refresh()
     }
 
@@ -546,7 +612,13 @@ struct ContentView: View {
                     infoRow("设备", s.deviceName, .secondary)
                 }
 
-                infoRow("主屏", s.isMain ? "iPad Pro" : "其他屏幕", s.isMain ? .green : .secondary)
+                if s.isMain {
+                    infoRow("主屏", "iPad Pro", .green)
+                } else if s.mainOnVirtual {
+                    infoRow("主屏", "虚拟屏 ⚠️", .orange)
+                } else {
+                    infoRow("主屏", "实体屏", .green)
+                }
 
                 HStack(spacing: 4) {
                     Text("虚拟屏").foregroundColor(.secondary)
@@ -624,6 +696,16 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity)
                 }
                 .disabled(s.busy || !s.deviceVisible)
+            }
+
+            // 主屏在虚拟屏上（异常），或者用户把 iPad 设成了主屏时，给一条切回实体屏的路
+            if s.mainOnVirtual || s.isMain {
+                Button {
+                    s.setMainToPhysical()
+                } label: {
+                    Text("主屏切回实体屏").frame(maxWidth: .infinity)
+                }
+                .disabled(s.busy)
             }
 
             Button {

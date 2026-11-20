@@ -173,6 +173,15 @@ final class VirtualScreen {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             guard let self, self.held != nil else { return }
             _ = self.applyHiDPIMode(did)
+
+            // 虚拟屏建出来常落在原点，顺手把主屏抢走。
+            // 等模式切换稳定后再让回去，交给实体屏（没有实体屏就给 iPad）。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                guard let self, self.held != nil else { return }
+                if Displays.kickVirtualOffMain() {
+                    vlog("↩️ 虚拟屏占用了主屏，已让给实体屏/iPad")
+                }
+            }
         }
 
         return did
