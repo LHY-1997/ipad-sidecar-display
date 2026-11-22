@@ -208,6 +208,96 @@ enum Displays {
         }
         return makeMain(target)
     }
+
+    // MARK: - Dock 归属
+
+    /// Dock 主窗口（layer 20）当前落在哪块屏上。
+    /// 随航连着、实体屏为主屏时，macOS 经常把 Dock 丢在 iPad 屏上不再跟回来，
+    /// 用户看到的就是"实体屏上 Dock 消失了"——其实 Dock 活着，只是在 iPad 上。
+    static func dockDisplayID() -> CGDirectDisplayID? {
+        guard let dock = NSRunningApplication
+            .runningApplications(withBundleIdentifier: "com.apple.dock").first else { return nil }
+        guard let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID)
+            as? [[String: Any]] else { return nil }
+        let pid = dock.processIdentifier
+        for w in list {
+            guard (w[kCGWindowOwnerPID as String] as? pid_t) == pid else { continue }
+            guard (w[kCGWindowLayer as String] as? Int) == 20 else { continue }
+            guard let bd = w[kCGWindowBounds as String] as? [String: Any],
+                  let x = (bd["X"] as? NSNumber)?.doubleValue,
+                  let y = (bd["Y"] as? NSNumber)?.doubleValue,
+                  let ww = (bd["Width"] as? NSNumber)?.doubleValue,
+                  let hh = (bd["Height"] as? NSNumber)?.doubleValue,
+                  ww > 100, hh > 20 else { continue }
+            let center = CGPoint(x: x + ww / 2, y: y + hh / 2)
+            // 只认活动屏。iPad 断开后 Dock 窗口会残留在原坐标上，
+            // CGGetDisplaysWithPoint 仍会返回那块已经不存在的 displayID，
+            // 而实体屏上其实没有 Dock——用户看到的就是"Dock 消失"。
+            if let did = displayContaining(center), ids().contains(did) {
+                return did
+            }
+            // 窗口落在任何活动屏之外：位置无效，返回 0 让调用方去修
+            return 0
+        }
+        return nil
+    }
+
+    /// 某个坐标点落在哪块屏上
+    static func displayContaining(_ p: CGPoint) -> CGDirectDisplayID? {
+        var cnt: UInt32 = 0
+        CGGetDisplaysWithPoint(p, 0, nil, &cnt)
+        guard cnt > 0 else { return nil }
+        var arr = [CGDirectDisplayID](repeating: 0, count: Int(cnt))
+        CGGetDisplaysWithPoint(p, cnt, &arr, &cnt)
+        return arr.first
+    }
+
+    /// 把 Dock 拽回主屏。会阻塞约 0.15 秒，必须放后台队列调。
+    ///
+    /// 系统没有公开 API 能指定 Dock 归属。实测下来：
+    /// - `killall Dock` 无效，重启后 Dock 仍在 iPad 屏
+    /// - 重新提交一次显示配置（CGCompleteDisplayConfiguration）无效
+    /// - 把 `com.apple.dock orientation` 改成 left 能让 Dock 锁在主屏，但那会改用户习惯
+    /// - 唯一干净有效的办法：把光标瞬移到主屏底部边缘压 150ms——Dock 跟着光标立刻归位，
+    ///   再把光标放回原处，用户基本无感
+    @discardableResult
+    static func pullDockToMain() -> Bool {
+        guard let main = ids().first(where: { CGDisplayIsMain($0) != 0 }) else { return false }
+        let b = CGDisplayBounds(main)
+        let saved = CGEvent(source: nil)?.location ?? .zero
+        let target = CGPoint(x: b.midX, y: b.maxY - 1)
+
+        // 分步移动过去。瞬移不会被 Dock 的底部触发区识别，必须像真人一样滑过去
+        let steps = 20
+        for i in 1...steps {
+            let t = CGFloat(i) / CGFloat(steps)
+            CGWarpMouseCursorPosition(CGPoint(x: saved.x + (target.x - saved.x) * t,
+                                              y: saved.y + (target.y - saved.y) * t))
+            Thread.sleep(forTimeInterval: 0.015)
+        }
+        // 到了边缘就原地停住，别再动。实测这里有两个坑：
+        //   1. 压边不能用 maxY —— 那是主屏和下一块屏的边界线。iPad 随航屏
+        //      常常正好贴在主屏下方，光标压到 maxY 就跳进 iPad，Dock 反而被带过去。
+        //   2. 上下抖动反而失败 —— 离开触发区 Dock 立刻缩回去，得一直待在区里。
+        // 所以：留在 maxY-1 不动，持续 1 秒，让 Dock 的触发区一直被打着。
+        for _ in 0..<10 {
+            CGWarpMouseCursorPosition(target)
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        // 确认 Dock 真的跟过来了再恢复鼠标。没跟过来就把光标留在底部，
+        // 这样 Dock 至少还在主屏上——比"光标回去了、Dock 留在 iPad"强。
+        // 轮询等 Dock 跟过来。系统响应常常要 1 秒以上，只判断一次会把
+        // "已经成功"误判成失败，于是鼠标留在底部不恢复。
+        // Dock 的响应很慢，实测要 5 秒以上才真的跟过来。窗口太短会把
+        // "已经成功"误判成失败，于是退避 30 秒、鼠标也不恢复，体验更差。
+        var arrived = false
+        for _ in 0..<30 {
+            if dockDisplayID() == main { arrived = true; break }
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        if arrived { CGWarpMouseCursorPosition(saved) }
+        return arrived
+    }
 }
 
 // MARK: - 状态
@@ -231,6 +321,16 @@ final class AppState: ObservableObject {
     /// 上一次把主屏从虚拟屏抢回来的时间，用于防抖（系统自己也会重排显示器，别打架）
     private var lastKickAt = Date.distantPast
 
+    /// 上一次检查 Dock 归属的时间。CGWindowList 遍历有成本，不必每 2 秒一次
+    private var lastDockCheckAt = Date.distantPast
+    /// 正在把 Dock 拽回来的过程中，别重复触发
+    private var dockFixing = false
+    /// 心跳：证明守护循环还活着，60 秒一条，不刷屏
+    private var lastHeartbeatAt = Date.distantPast
+    /// 拽回失败后的冷却截止时间。系统有时就是不配合，
+    /// 每 4 秒重试一次会把用户的鼠标拽来拽去，必须退避
+    private var dockRetryAfter = Date.distantPast
+
     private var timer: Timer?
 
     var currentDeviceName: String {
@@ -246,8 +346,13 @@ final class AppState: ObservableObject {
         // 顺手清掉旧版本留下的 vdisplay.off，避免残留文件造成误解。
         try? FileManager.default.removeItem(atPath: vOffFile)
         virtualScreenOn = true
-        // AppDelegate 已经建过就幂等返回；这里兜底（比如窗口先于 delegate 求值）
-        _ = VirtualScreen.shared.turnOn()
+        // 建屏兜底。AppDelegate.applicationDidFinishLaunching 实测经常不触发
+        // （SwiftUI 走 --background 时 delegate 可能根本不回调），不能只靠它。
+        // 但也不能同步调：SwiftUI 求值栈上跑 CGVirtualDisplay 私有 API 会 SIGSEGV。
+        // 折中：延迟 0.5 秒，等 body 求值彻底结束再建。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            _ = VirtualScreen.shared.turnOn()
+        }
 
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
@@ -309,6 +414,20 @@ final class AppState: ObservableObject {
             vlog("↩️ 主屏已归位（有实体屏给实体屏，没有则给 iPad）")
         }
 
+        // Dock 归属：随航连着时系统常把 Dock 丢在 iPad 屏不跟回来
+        if Date() > dockRetryAfter, Date().timeIntervalSince(lastDockCheckAt) > 3, !dockFixing {
+            lastDockCheckAt = Date()
+            checkDock()
+        }
+
+        // 心跳：确认守护循环活着。60 秒一条，能看出面板有没有被系统挂起
+        if Date().timeIntervalSince(lastHeartbeatAt) > 60 {
+            lastHeartbeatAt = Date()
+            let main = Displays.ids().first(where: { CGDisplayIsMain($0) != 0 }) ?? 0
+            let dk = Displays.dockDisplayID() ?? 0
+            vlog("💓 守护运行中  主屏=\(main)  Dock=\(dk)  屏数=\(Displays.ids().count)")
+        }
+
         let devs = Sidecar.devices()
         let vis = !devs.isEmpty
         if vis != deviceVisible { deviceVisible = vis }
@@ -337,6 +456,41 @@ final class AppState: ObservableObject {
             if tail != logs { logs = tail }
         } else if !logs.isEmpty {
             logs = []
+        }
+    }
+
+    /// Dock 没跟着光标回来时，把它拽回主屏。
+    ///
+    /// 只在"光标在主屏、Dock 却在别的屏"时动手。用户主动把光标移到 iPad 底部
+    /// 唤出 Dock 是 macOS 的正常行为，那时候 Dock 跟着光标走，不该干预。
+    private func checkDock() {
+        guard let main = Displays.ids().first(where: { CGDisplayIsMain($0) != 0 }) else { return }
+        // 用户不在主屏上，别管
+        guard let mouse = CGEvent(source: nil)?.location,
+              Displays.displayContaining(mouse) == main else { return }
+        // Dock 已经在主屏
+        guard let dockScreen = Displays.dockDisplayID() else { return }
+        guard dockScreen != main else { return }
+
+        let whereIs = dockScreen == 0 ? "位置无效" : "屏 \(dockScreen)"
+        vlog("🔧 Dock 在\(whereIs)，主屏 \(main)，开始拽回")
+        dockFixing = true
+        // 必须跑在主线程。放后台 QoS 队列时 Thread.sleep 会被系统降频拉长，
+        // warp 序列的节奏就散了，Dock 的触发区"看不到"光标连续压边，
+        // 实测同样的坐标序列在主线程能拉回、在 utility 队列拉不回。
+        DispatchQueue.main.async {
+            _ = Displays.pullDockToMain()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 9.0) { [weak self] in
+                guard let self else { return }
+                self.dockFixing = false
+                if Displays.dockDisplayID() == main {
+                    vlog("🩹 Dock 被系统丢在别的屏上，已拽回主屏")
+                } else {
+                    // 系统这次不配合，退避 30 秒再试，别反复折腾用户的鼠标
+                    self.dockRetryAfter = Date().addingTimeInterval(30)
+                    vlog("⚠️ Dock 拽回失败，30 秒后重试")
+                }
+            }
         }
     }
 
