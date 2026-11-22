@@ -241,13 +241,13 @@ final class AppState: ObservableObject {
     init() {
         interval = Self.readInterval()
 
-        // 虚拟屏：默认开启，只有 vdisplay.off 存在才算用户关过
-        let vOff = FileManager.default.fileExists(atPath: vOffFile)
-        virtualScreenOn = !vOff
-        if !vOff {
-            // AppDelegate 已经建过就幂等返回；这里兜底（比如窗口先于 delegate 求值）
-            _ = VirtualScreen.shared.turnOn()
-        }
+        // 虚拟屏：每次启动都开。关闭只是本次运行内的临时状态，不落盘，
+        // 重启（含面板被 watchdog 拉起）后一律恢复开启——随航靠它当落脚点。
+        // 顺手清掉旧版本留下的 vdisplay.off，避免残留文件造成误解。
+        try? FileManager.default.removeItem(atPath: vOffFile)
+        virtualScreenOn = true
+        // AppDelegate 已经建过就幂等返回；这里兜底（比如窗口先于 delegate 求值）
+        _ = VirtualScreen.shared.turnOn()
 
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
@@ -463,10 +463,11 @@ final class AppState: ObservableObject {
                 message = "虚拟屏创建失败，看 vdisplay.log"
             }
         } else {
-            try? "off".write(toFile: vOffFile, atomically: true, encoding: .utf8)
+            // 不写持久标记：关闭只对本次运行有效，重启后自动恢复开启
+            try? FileManager.default.removeItem(atPath: vOffFile)
             VirtualScreen.shared.turnOff()
             virtualScreenOn = false
-            message = "虚拟屏已关闭"
+            message = "虚拟屏已关闭（重启后自动恢复）"
         }
         refresh()
     }
@@ -487,8 +488,9 @@ final class AppState: ObservableObject {
 
         • 系统会退到一块 1920×1080 的兜底屏，分辨率掉一半，HiDPI 没了
         • 随航大概率当场断开（实测会断），要等自动重连或手动点「连接随航」
-        • 没有实体屏、也没接 HDMI 欺骗器时，重启后可能连兜底屏都没有，画面彻底消失
-        • 恢复办法：重新打开这个开关，或删掉 vdisplay.off 后重启
+        • 没有实体屏、也没接 HDMI 欺骗器时，画面可能彻底消失
+        • 这次关闭只对当前运行有效，重启后虚拟屏会自动恢复开启
+        • 想立刻恢复：重新打开这个开关
 
         确定要关闭吗？
         """
@@ -816,10 +818,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try? FileManager.default.removeItem(atPath: panelOffFile)
 
         // 最早时机建虚拟屏：无头 Mac 开机时系统可能一块屏都没有，
-        // 越早建出落脚点，WindowServer 和随航越早有着落
-        if !FileManager.default.fileExists(atPath: vOffFile) {
-            _ = VirtualScreen.shared.turnOn()
-        }
+        // 越早建出落脚点，WindowServer 和随航越早有着落。
+        // 无条件建：关闭虚拟屏只是上次运行的临时状态，重启一律恢复开启。
+        try? FileManager.default.removeItem(atPath: vOffFile)
+        _ = VirtualScreen.shared.turnOn()
 
         // 开机自启也把面板弹出来。之前这里是 orderOut 藏窗口，
         // 但那时菜单栏没有图标，藏完就彻底没入口了，只剩 Dock 里一个图标。

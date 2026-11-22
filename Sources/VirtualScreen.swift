@@ -187,13 +187,25 @@ final class VirtualScreen {
         return did
     }
 
-    /// 销毁虚拟屏。屏会立刻从系统消失。
+    /// 销毁虚拟屏。
+    /// 光把 held 置空不够：对象释放后系统不保证立刻移除这块显示器，实测能残留几分钟。
+    /// 释放后再提交一次显示配置变更，把这块屏真正踢掉。
     func turnOff() {
         guard held != nil else { return }
         let old = displayID
         held = nil
         displayID = nil
         vlog("── 虚拟屏已关闭（原 displayID=\(old.map(String.init) ?? "?")）")
+
+        var cfg: CGDisplayConfigRef?
+        if CGBeginDisplayConfiguration(&cfg) == .success, let cfg = cfg {
+            let r = CGCompleteDisplayConfiguration(cfg, .forSession)
+            if r == .success {
+                vlog("↩️ 已提交显示配置变更，虚拟屏应已移除")
+            } else {
+                vlog("⚠️ 显示配置变更失败 err=\(r.rawValue)")
+            }
+        }
     }
 
     /// 切到 HiDPI 模式（物理 = 逻辑 × 2）
