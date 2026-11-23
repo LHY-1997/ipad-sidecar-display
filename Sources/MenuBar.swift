@@ -181,6 +181,12 @@ enum Displays {
         ids().first { !isVirtual($0) && !isIPad($0) }
     }
 
+    /// 虚拟屏要不要自动建：只给没有实体屏的机器当落脚点。
+    /// 有实体屏还建一块，等于凭空多出一块屏，会打乱主屏归属和 Dock 位置。
+    static func needsVirtualScreen() -> Bool {
+        physical() == nil
+    }
+
     /// 主屏的合法候选：实体屏优先，其次 iPad。虚拟屏永远不在候选里。
     static func mainCandidate() -> CGDirectDisplayID? {
         if let p = physical() { return p }
@@ -241,13 +247,10 @@ final class AppState: ObservableObject {
     init() {
         interval = Self.readInterval()
 
-        // 虚拟屏：默认开启，只有 vdisplay.off 存在才算用户关过
-        let vOff = FileManager.default.fileExists(atPath: vOffFile)
-        virtualScreenOn = !vOff
-        if !vOff {
-            // AppDelegate 已经建过就幂等返回；这里兜底（比如窗口先于 delegate 求值）
-            _ = VirtualScreen.shared.turnOn()
-        }
+        // 虚拟屏状态以进程实际持有为准。这里不建屏——建屏统一在
+        // applicationDidFinishLaunching 里按「有没有实体屏」决定。
+        // 两个入口各建一块，正是随航每分钟断开的元凶。
+        virtualScreenOn = VirtualScreen.shared.displayID != nil
 
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
@@ -295,6 +298,19 @@ final class AppState: ObservableObject {
     }
 
     func refresh() {
+        // 虚拟屏状态跟随进程实际持有情况：建屏是延迟做的，UI 不能一直显示"关"。
+        let vOn = VirtualScreen.shared.displayID != nil
+        if vOn != virtualScreenOn { virtualScreenOn = vOn }
+
+        // 没有实体屏就必须有虚拟屏当落脚点：开机时延迟建屏还没落地、或中途
+        // 拔掉了实体屏，都靠这里补上。用户手动关过（vdisplay.off）则不插手。
+        if !vOn, Displays.needsVirtualScreen(),
+           !FileManager.default.fileExists(atPath: vOffFile),
+           VirtualScreen.shared.turnOn() != nil {
+            virtualScreenOn = true
+            vlog("🖥️ 没有实体屏，已自动创建虚拟屏作为落脚点")
+        }
+
         let ipad = Displays.ipad()
         let nowConnected = ipad != nil
         let nowMain = ipad.map { Displays.isMain($0) } ?? false
@@ -811,14 +827,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                  y: vf.midY - ws.height / 2))
     }
 
+    /// 没有实体屏才建虚拟屏。
+    ///
+    /// 开机瞬间显示器可能还没枚举完，这时候 physical() 读不到实体屏，会被
+    /// 误判成"无头机器"而多建一块屏——所以判断为"没有实体屏"时先等 2 秒
+    /// 复核，确认还是没有才建。有实体屏的情况直接返回，不建。
+    private func tryAutoVirtualScreen() {
+        if !Displays.needsVirtualScreen() { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            guard !FileManager.default.fileExists(atPath: vOffFile) else { return }
+            guard VirtualScreen.shared.displayID == nil else { return }
+            guard Displays.needsVirtualScreen() else { return }
+            if VirtualScreen.shared.turnOn() != nil {
+                vlog("🖥️ 没有实体屏，已自动创建虚拟屏作为落脚点")
+            }
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 面板起来了，清掉上次的主动退出标记，让 watchdog 恢复守护
         try? FileManager.default.removeItem(atPath: panelOffFile)
 
-        // 最早时机建虚拟屏：无头 Mac 开机时系统可能一块屏都没有，
-        // 越早建出落脚点，WindowServer 和随航越早有着落
+        // 虚拟屏只给没有实体屏的机器当落脚点。有实体屏还建一块，等于凭空
+        // 多出一块屏，会打乱主屏归属和 Dock 位置。
         if !FileManager.default.fileExists(atPath: vOffFile) {
-            _ = VirtualScreen.shared.turnOn()
+            tryAutoVirtualScreen()
         }
 
         // 开机自启也把面板弹出来。之前这里是 orderOut 藏窗口，
