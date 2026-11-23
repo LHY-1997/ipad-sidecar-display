@@ -16,6 +16,14 @@ let DUMMY_MODEL: UInt32 = 0x76697274
 func isDummy(_ id: CGDirectDisplayID) -> Bool {
     CGDisplayVendorNumber(id) == DUMMY_VENDOR || CGDisplayModelNumber(id) == DUMMY_MODEL
 }
+
+/// 给面板发一次「iPad 断了」的提示信号。同一个断开周期内只发一次。
+func postNotifyOnce() {
+    if !FileManager.default.fileExists(atPath: notifiedFile) {
+        try? "1".write(toFile: notifiedFile, atomically: true, encoding: .utf8)
+        try? "\(Date())".write(toFile: notifyFile, atomically: true, encoding: .utf8)
+    }
+}
 let base = NSHomeDirectory() + "/Library/Application Support/ipad-watchdog"
 let pauseFile = base + "/pause"
 let logFile = base + "/watchdog.log"
@@ -406,11 +414,14 @@ let r = connect(p.device!)
 if !r.ok {
     squashPopup()
     log("连接失败: \(r.msg)")
-    // 系统警告弹窗已经被压掉了，用户只会看到一闪。所以补一个说明：
-    // 告诉他可以暂停自动重连，免得被反复打扰。本次断开只提示一次。
-    if !FileManager.default.fileExists(atPath: notifiedFile) {
-        try? "1".write(toFile: notifiedFile, atomically: true, encoding: .utf8)
-        try? "\(Date())".write(toFile: notifyFile, atomically: true, encoding: .utf8)
+    // 这个提示的用途是告诉用户「可以暂停自动重连」，不是提醒去重连——重连本来就一直在跑。
+    // 有实体屏时 iPad 是副屏，掉了得说一声，用户才知道有这个开关。
+    // 没有实体屏时不提示：iPad 是唯一的物理可见屏，它连不上用户什么都看不见，
+    // 弹窗只会落在虚拟屏上——而虚拟屏没有物理输出，等于没提示。
+    if physicalDisplay() != nil {
+        postNotifyOnce()
+    } else {
+        log("连接失败，无实体屏，不提示（弹了也落在看不见的虚拟屏上）")
     }
     exit(0)
 }
