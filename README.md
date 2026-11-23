@@ -7,7 +7,7 @@
 适合固定工位：iPad 架在支架上当主屏，Mac mini 藏在桌下，每天开机自动连上，人走开自动不连。
 
 <p align="center">
-  <img src="docs/panel.png" alt="iPad 随航控制面板：已连接 iPad Pro、已设 iPad 为主屏、虚拟屏开启、自动重连 10 秒、三条就绪日志、左下角版本号 v2.3" width="280">
+  <img src="docs/panel.png" alt="iPad 随航控制面板：已连接 iPad Pro、已设 iPad 为主屏、虚拟屏开启、自动重连 10 秒、三条就绪日志、左下角显示版本号" width="280">
 </p>
 
 <p align="center">
@@ -42,9 +42,9 @@ macOS 的随航（Sidecar）功能本身很好用，但把它当**主显示器**
 
 ### 下载即用
 
-从 [Releases](https://github.com/nishtica/ipad-sidecar-display/releases/latest) 下载 `iPad-Sidecar-Display-2.3.zip`，解压后**右键点击 `安装.command`** 选「打开」。
+从 [Releases](https://github.com/nishtica/ipad-sidecar-display/releases/latest) 下载 `iPad-Sidecar-Display-2.4.zip`，解压后**右键点击 `安装.command`** 选「打开」。
 
-> **别点绿色的 Code 按钮。** GitHub 首页的 `Code → Download ZIP`、Release 页面底部的 `Source code (zip)` 都是**源码包**，里面只有代码、没有编译好的程序，装不了——运行 `安装.command` 会报「缺少 payload」。认准 Releases 里 Assets 下的 `iPad-Sidecar-Display-2.3.zip`，解压出来应该有一个 `payload` 文件夹，里面有 `iPad随航.app`。
+> **别点绿色的 Code 按钮。** GitHub 首页的 `Code → Download ZIP`、Release 页面底部的 `Source code (zip)` 都是**源码包**，里面只有代码、没有编译好的程序，装不了——运行 `安装.command` 会报「缺少 payload」。认准 Releases 里 Assets 下的 `iPad-Sidecar-Display-2.4.zip`，解压出来应该有一个 `payload` 文件夹，里面有 `iPad随航.app`。
 
 > 为什么是右键？脚本没有 Apple 开发者签名，macOS 第一次会拦。右键选「打开」会多出「打开」按钮，点它就行。
 
@@ -58,11 +58,11 @@ cd ipad-sidecar-display
 ./build.sh
 ```
 
-产出 `iPad-Sidecar-Display-2.3.zip`，解压后同样双击 `安装.command`。
+产出 `iPad-Sidecar-Display-2.4.zip`，解压后同样双击 `安装.command`。
 
 需要 macOS 13+ 和 Xcode 命令行工具（`xcode-select --install`）。
 
-**改版本号只改一处**：`build.sh` 顶部的 `VERSION`。zip 文件名和 app 的 `Info.plist` 都引用它，`CFBundleVersion` 自动取去掉小数点的形式（`2.3` → `23`）。面板左下角显示的 `v2.3` 是运行时从 `Info.plist` 读的，不用另外维护。
+**改版本号只改一处**：`build.sh` 顶部的 `VERSION`。zip 文件名和 app 的 `Info.plist` 都引用它，`CFBundleVersion` 自动取去掉小数点的形式（`2.4` → `24`）。面板左下角显示的 `v2.4` 是运行时从 `Info.plist` 读的，不用另外维护。
 
 ## 工作原理
 
