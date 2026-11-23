@@ -9,6 +9,14 @@ let pauseFile = baseDir + "/pause"
 let logFile = baseDir + "/watchdog.log"
 let targetFile = baseDir + "/target"
 let intervalFile = baseDir + "/interval"
+/// watchdog 连接失败时留下的信号文件，面板看到就弹一次说明
+let notifyFile = baseDir + "/notify-disconnect"
+/// watchdog 用来记「本次断开已经提示过」，避免每 10 秒弹一次
+let notifiedFile = baseDir + "/notified"
+/// 开机后待应用：把 iPad 顶成主屏，内容是这一轮开机的 boot time
+let mainIpadFile = baseDir + "/main-ipad"
+/// watchdog 应用过之后写下的 boot time，用来区分系统重启和面板自己重启
+let mainIpadDoneFile = baseDir + "/main-ipad.done"
 /// 这个文件存在 = 用户主动关掉了虚拟屏；不存在 = 默认开启
 let vOffFile = baseDir + "/vdisplay.off"
 /// 这个文件存在 = 当前这块虚拟屏是程序自动建的（不是用户手动开的）。
@@ -17,6 +25,7 @@ let vAutoFile = baseDir + "/vdisplay.auto"
 /// 用户主动退出面板时创建，watchdog 看到就不再把面板拉起来
 let panelOffFile = baseDir + "/panel.off"
 let watchdogPlist = NSHomeDirectory() + "/Library/LaunchAgents/com.local.ipad-watchdog.plist"
+/// 已经引导过一次辅助功能授权。存在就不再自动弹，避免每次开机都烦人。
 
 struct DeviceInfo: Identifiable, Equatable {
     let id: String
@@ -27,7 +36,9 @@ struct DeviceInfo: Identifiable, Equatable {
 
 /// 连接失败时系统会弹「无法连接 "xxx" 发生了其他错误 (-1010)」，卡在屏幕上等人点「好」。
 /// 弹窗进程是 UserNotificationCenter，不是 SidecarDisplayAgent。
-/// 点按钮需要 AppleScript / Accessibility 权限，GUI app 不一定有，所以直接杀进程。
+/// 实测（11-23 21:43）：AX 路线走不通——即使进程已有辅助功能权限，
+/// UserNotificationCenter 也不暴露元素树（连 AXRole 都读不到），按钮点不了。
+/// 只剩 killall：杀掉后弹窗 0.5 秒内消失，且不会自己回来。
 /// 副作用：连带清掉当前通知横幅；该进程按需启动，下次有通知会自己回来。
 enum Popup {
     static func hasWindow() -> Bool {
@@ -55,14 +66,20 @@ enum Popup {
         try? p.run()
     }
 
-    /// 后台清理，不阻塞界面
+    private static var busy = false
+
+    /// 后台清理，不阻塞界面。
     static func squash() {
+        if busy { return }
+        busy = true
         DispatchQueue.global().async {
             kill()
+            // 补一刀：万一第一次没退干净
             for _ in 0..<3 {
                 Thread.sleep(forTimeInterval: 0.3)
                 if hasWindow() { kill() } else { break }
             }
+            busy = false
         }
     }
 }
@@ -237,7 +254,27 @@ enum Displays {
 
 // MARK: - 状态
 
+/// 本次开机的时刻（秒）。用来区分「系统重启」和「面板自己重启」——
+/// 只有系统重启才需要重新把 iPad 顶成主屏。
+func bootTimeSeconds() -> Int {
+    var tv = timeval()
+    var size = MemoryLayout<timeval>.size
+    guard sysctlbyname("kern.boottime", &tv, &size, nil, 0) == 0 else { return 0 }
+    return Int(tv.tv_sec)
+}
+
+/// 说明面板上两个按钮的回调桥。AppState 不是 NSObject，不能直接当 target。
+private final class NoticeBridge: NSObject {
+    var onPause: (() -> Void)?
+    var onClose: (() -> Void)?
+    @objc func pauseTapped() { onPause?() }
+    @objc func closeTapped() { onClose?() }
+}
+
 final class AppState: ObservableObject {
+    private var noticePanel: NSPanel?
+    private var noticeBridge: NoticeBridge?
+
     @Published var connected = false
     @Published var isMain = false
     @Published var mainOnVirtual = false
@@ -399,6 +436,100 @@ final class AppState: ObservableObject {
         } else if !logs.isEmpty {
             logs = []
         }
+
+        // 每 2 秒顺手看一眼有没有系统警告弹窗。有就压掉——不等到手动连接失败才处理，
+        // 这样 watchdog 自动重连撞出来的弹窗也能在两秒内消失。
+        if Popup.hasWindow() { Popup.squash() }
+
+        // watchdog 连接失败时会留个信号：系统警告被压掉了，用户只看到一闪，
+        // 得补一句说明，告诉他可以暂停自动重连。每次断开只提示一次。
+        if FileManager.default.fileExists(atPath: notifyFile) {
+            try? FileManager.default.removeItem(atPath: notifyFile)
+            showDisconnectNotice()
+        }
+    }
+
+    /// iPad 连不上时给一次说明。watchdog 每次断开周期只发一次信号，不会反复弹。
+    ///
+    /// 不用 NSAlert.runModal()：一是它会阻塞 refresh 循环，用户不点面板就卡死；
+    /// 二是实测在 --background 启动的场景下 runModal 会立刻返回第二按钮，
+    /// 等于没问就把守护停了（11-23 21:56 踩到）。改用非模态浮动面板。
+    func showDisconnectNotice() {
+        if let p = noticePanel, p.isVisible {
+            p.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        let w: CGFloat = 400, h: CGFloat = 200
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: w, height: h),
+                            styleMask: [.titled, .closable],
+                            backing: .buffered,
+                            defer: false)
+        panel.title = "iPad 随航断开"
+        panel.isFloatingPanel = true
+        panel.level = .floating
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: w, height: h))
+
+        let text = NSTextField(wrappingLabelWithString:
+            "正在尝试自动重连。\n\n如果暂时不需要 iPad 随航，可以暂停自动重连，免得被反复打扰。软件重启后会自动恢复开启。")
+        text.frame = NSRect(x: 20, y: 66, width: w - 40, height: 116)
+        text.font = .systemFont(ofSize: 13)
+        text.isSelectable = false
+        text.isEditable = false
+        text.isBordered = false
+        text.drawsBackground = false
+        text.lineBreakMode = .byWordWrapping
+        text.maximumNumberOfLines = 0
+        text.preferredMaxLayoutWidth = w - 40
+        box.addSubview(text)
+
+        let bridge = NoticeBridge()
+        bridge.onPause = { [weak self] in
+            guard let self else { return }
+            _ = FileManager.default.createFile(atPath: pauseFile, contents: nil)
+            // 清掉「本轮已提示」，用户恢复自动重连后要是还连不上，重新提示一次
+            try? FileManager.default.removeItem(atPath: notifiedFile)
+            self.watchdogPaused = true
+            self.message = "自动重连已暂停"
+            self.noticePanel?.close()
+            self.noticePanel = nil
+        }
+        bridge.onClose = { [weak self] in
+            self?.noticePanel?.close()
+            self?.noticePanel = nil
+        }
+        noticeBridge = bridge
+
+        let okBtn = NSButton(title: "知道了", target: bridge, action: #selector(NoticeBridge.closeTapped))
+        okBtn.frame = NSRect(x: w - 20 - 90, y: 18, width: 90, height: 32)
+        okBtn.bezelStyle = .rounded
+        okBtn.keyEquivalent = "\r"
+        box.addSubview(okBtn)
+
+        let pauseBtn = NSButton(title: "暂停自动重连", target: bridge, action: #selector(NoticeBridge.pauseTapped))
+        pauseBtn.frame = NSRect(x: w - 20 - 90 - 8 - 130, y: 18, width: 130, height: 32)
+        pauseBtn.bezelStyle = .rounded
+        box.addSubview(pauseBtn)
+
+        panel.contentView = box
+        // 显式钉死内容尺寸：只给 contentRect 的话窗口会被 contentView 的
+        // 自动布局压窄，文字就会溢出到面板外面
+        panel.setContentSize(NSSize(width: w, height: h))
+        panel.minSize = NSSize(width: w, height: h)
+        panel.maxSize = NSSize(width: w, height: h)
+        // 放屏幕上方偏中，避开居中的主面板，两个窗口别叠在一起
+        if let scr = NSScreen.main {
+            let vf = scr.visibleFrame
+            panel.setFrameOrigin(NSPoint(x: vf.midX - w / 2, y: vf.maxY - h - 90))
+        } else {
+            panel.center()
+        }
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        noticePanel = panel
     }
 
     func connect() {
@@ -529,7 +660,7 @@ final class AppState: ObservableObject {
             try? "off".write(toFile: vOffFile, atomically: true, encoding: .utf8)
             VirtualScreen.shared.turnOff()
             virtualScreenOn = false
-            message = "虚拟屏已关闭"
+            message = "虚拟屏已关闭（重启后自动恢复）"
         }
         refresh()
     }
@@ -550,8 +681,8 @@ final class AppState: ObservableObject {
 
         • 系统会退到一块 1920×1080 的兜底屏，分辨率掉一半，HiDPI 没了
         • 随航大概率当场断开（实测会断），要等自动重连或手动点「连接随航」
-        • 没有实体屏、也没接 HDMI 欺骗器时，重启后可能连兜底屏都没有，画面彻底消失
-        • 恢复办法：重新打开这个开关，或删掉 vdisplay.off 后重启
+        • 没有实体屏时，画面会退到兜底屏
+        • 恢复办法：重新打开这个开关；软件重启后也会自动恢复开启
 
         确定要关闭吗？
         """
@@ -896,17 +1027,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 面板起来了，清掉上次的主动退出标记，让 watchdog 恢复守护
         try? FileManager.default.removeItem(atPath: panelOffFile)
 
-        // 虚拟屏只给没有实体屏的机器当落脚点。有实体屏还建一块，等于凭空
-        // 多出一块屏，会打乱主屏归属和 Dock 位置。
-        if !FileManager.default.fileExists(atPath: vOffFile) {
-            tryAutoVirtualScreen()
-        }
+        // 虚拟屏的「关闭」和暂停自动重连一样，只对当次运行有效：重启后回到
+        // 自动判断（有实体屏不建，没实体屏才建，实体屏回来再回收）。
+        // 只清标记不够——refresh 的建屏/回收两条路都看这个文件。
+        try? FileManager.default.removeItem(atPath: vOffFile)
+        tryAutoVirtualScreen()
 
         // 开机自启也把面板弹出来。之前这里是 orderOut 藏窗口，
         // 但那时菜单栏没有图标，藏完就彻底没入口了，只剩 Dock 里一个图标。
-        if CommandLine.arguments.contains("--background") {
-            // 恢复自动重连（清掉上次可能残留的暂停标记）
-            try? FileManager.default.removeItem(atPath: pauseFile)
+        //
+        // 手动断开 / 暂停自动重连只对当次有效：面板每次启动都回到默认开启状态，
+        // 不管是不是 --background 拉起。用户手动关掉随航后重启，守护照常工作。
+        try? FileManager.default.removeItem(atPath: pauseFile)
+        try? FileManager.default.removeItem(atPath: notifiedFile)
+
+        // 开机后第一次：让 watchdog 把 iPad 顶成主屏。
+        // 用户要求（11-23 22:37）：重启后除了恢复自动重连，还要默认 iPad 主屏；
+        // 不然没接实体屏的场合主屏会停在不存在的那块屏上。
+        // 用 boot time 认「系统重启」，面板自己重启时 .done 已经是同一个值，不会重复抢主屏。
+        let bt = "\(bootTimeSeconds())"
+        let done = (try? String(contentsOfFile: mainIpadDoneFile, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if bt != "0", done != bt {
+            try? bt.write(toFile: mainIpadFile, atomically: true, encoding: .utf8)
         }
 
         NSApp.activate(ignoringOtherApps: true)

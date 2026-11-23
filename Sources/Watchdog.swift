@@ -13,6 +13,14 @@ let pauseFile = base + "/pause"
 let logFile = base + "/watchdog.log"
 let targetFile = base + "/target"
 let lockFile = base + "/.lock"
+/// 连接失败时写给面板的信号：让它弹一次说明，告诉用户可以暂停自动重连
+let notifyFile = base + "/notify-disconnect"
+/// 本次断开周期内已经提示过，避免每 10 秒弹一次
+let notifiedFile = base + "/notified"
+/// 开机后待应用：把 iPad 顶成主屏。内容是本轮开机的 boot time。
+let mainIpadFile = base + "/main-ipad"
+/// 已应用过的 boot time，用来区分「系统重启」和「面板自己重启」
+let mainIpadDoneFile = base + "/main-ipad.done"
 
 // MARK: - 基础 IO
 
@@ -192,7 +200,10 @@ func killPopupAgent() -> Bool {
     do { try p.run(); p.waitUntilExit(); return p.terminationStatus == 0 } catch { return false }
 }
 
-/// 发现弹窗就杀，确认窗口真的没了才收手
+/// 发现弹窗就杀，确认窗口真的没了才收手。
+/// 实测（11-23 21:43）：AX 点按钮这条路走不通——UserNotificationCenter 不暴露元素树，
+/// 进程有辅助功能权限也读不到 AXRole，按钮点不了。只剩 killall：
+/// 杀掉后弹窗 0.5 秒内消失，且不会自己回来。
 func squashPopup() {
     killPopupAgent()
     for _ in 0..<3 {
@@ -266,6 +277,19 @@ func enforceMain() -> Bool {
     return makeMain(target)
 }
 
+/// 开机后第一次连上 iPad：按用户要求默认把它顶成主屏，不管有没有实体屏。
+/// 用户场景（11-23 22:37）：重启后自动重连开了，但主屏还留在实体屏上；
+/// 没接实体屏的场合主屏就会指向一块不存在的屏，什么都看不到。
+/// 应用一次就把 boot time 记进 .done，之后用户手动改主屏不会被抢回来。
+func applyBootMainPreference() -> Bool {
+    guard FileManager.default.fileExists(atPath: mainIpadFile) else { return false }
+    guard let ipad = findIPad() else { return false }
+    let stamp = (try? String(contentsOfFile: mainIpadFile, encoding: .utf8)) ?? ""
+    try? stamp.write(toFile: mainIpadDoneFile, atomically: true, encoding: .utf8)
+    try? FileManager.default.removeItem(atPath: mainIpadFile)
+    return makeMain(ipad)
+}
+
 /// 返回：-1 组件加载失败，0 设备不可见，1 有设备
 func probeDevices() -> (state: Int, device: AnyObject?, msg: String) {
     guard dlopen("/System/Library/PrivateFrameworks/SidecarCore.framework/SidecarCore", RTLD_NOW) != nil,
@@ -292,6 +316,17 @@ func probeDevices() -> (state: Int, device: AnyObject?, msg: String) {
         if let d = devs.first { return (1, d, "目标不在，改连其他") }
     }
     return (1, devs.first, "设备可见")
+}
+
+/// 当前活跃连接数。0 = 没有活跃连接，说明 iPad 处于休眠 / 合盖 / 关机。
+/// iPad 打开时系统会自己重建连接（con 回到 1），不需要我们主动连。
+func connectedDeviceCount() -> Int {
+    guard dlopen("/System/Library/PrivateFrameworks/SidecarCore.framework/SidecarCore", RTLD_NOW) != nil,
+          let cls = NSClassFromString("SidecarDisplayManager") as? NSObject.Type else {
+        return -1
+    }
+    let mgr = cls.init()
+    return (mgr.value(forKey: "connectedDevices") as? [AnyObject])?.count ?? 0
 }
 
 func connect(_ device: AnyObject) -> (ok: Bool, msg: String) {
@@ -339,6 +374,12 @@ if !userIsHere() { exit(0) }
 // 2) 屏已经在 → 按规则校正主屏归属
 // 有实体屏时实体屏/iPad 由用户决定；没有实体屏时 iPad 必须在主屏位
 if findIPad() != nil {
+    // iPad 在线了，说明这一轮断开结束了，下次断开重新提示一次
+    try? FileManager.default.removeItem(atPath: notifiedFile)
+    if applyBootMainPreference() {
+        log("开机默认：iPad 已设为主屏")
+        exit(0)
+    }
     if enforceMain() { log("主屏已归位") }
     exit(0)
 }
@@ -356,6 +397,12 @@ let r = connect(p.device!)
 if !r.ok {
     squashPopup()
     log("连接失败: \(r.msg)")
+    // 系统警告弹窗已经被压掉了，用户只会看到一闪。所以补一个说明：
+    // 告诉他可以暂停自动重连，免得被反复打扰。本次断开只提示一次。
+    if !FileManager.default.fileExists(atPath: notifiedFile) {
+        try? "1".write(toFile: notifiedFile, atomically: true, encoding: .utf8)
+        try? "\(Date())".write(toFile: notifyFile, atomically: true, encoding: .utf8)
+    }
     exit(0)
 }
 
@@ -363,7 +410,13 @@ if !r.ok {
 let dl = Date().addingTimeInterval(15)
 while Date() < dl {
     if findIPad() != nil {
-        // 连上之后按规则定主屏：有实体屏时由用户选，没有实体屏则 iPad 必须在主屏位
+        try? FileManager.default.removeItem(atPath: notifiedFile)
+        // 开机后第一次连上：无条件顶成主屏
+        if applyBootMainPreference() {
+            log("开机默认：iPad 已设为主屏")
+            exit(0)
+        }
+        // 之后按规则定主屏：有实体屏时由用户选，没有实体屏则 iPad 必须在主屏位
         if enforceMain() {
             log("随航已就绪，主屏已归位")
         } else {
