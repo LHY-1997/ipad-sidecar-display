@@ -141,12 +141,23 @@ final class VirtualScreen {
         vlog("── 虚拟屏已关闭（原 displayID=\(old.map(String.init) ?? "?")）")
 
         guard let old else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            if CGDisplayIsOnline(old) != 0 {
-                vlog("⚠️ 虚拟屏 \(old) 仍在系统里")
-            } else {
-                vlog("✅ 虚拟屏 \(old) 已从系统移除")
-            }
+        // 结束进程后 WindowServer 注销这块屏要一两秒。之前固定等 1.5 秒判断，
+        // 经常还没注销完就误报「仍在系统里」（11-23 23:09 实测屏已经没了却报警）。
+        waitGone(old, deadline: Date().addingTimeInterval(6))
+    }
+
+    /// 轮询确认屏真的从系统消失，超时才报异常
+    private func waitGone(_ did: CGDirectDisplayID, deadline: Date) {
+        if CGDisplayIsOnline(did) == 0 {
+            vlog("✅ 虚拟屏 \(did) 已从系统移除")
+            return
+        }
+        guard Date() < deadline else {
+            vlog("⚠️ 虚拟屏 \(did) 6 秒后仍在系统里")
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.waitGone(did, deadline: deadline)
         }
     }
 
