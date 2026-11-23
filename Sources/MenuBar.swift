@@ -188,6 +188,17 @@ enum Displays {
     /// 虚拟屏的 vendorID，和 VirtualScreen.swift 里注册的一致
     static let VIRTUAL_VENDOR: UInt32 = 0x1A2B
 
+    /// 系统在没有任何可用屏时自己塞的兜底屏：1920×1080，vendor/model 是
+    /// ASCII 的 "unkn"/"virt"。拔掉实体屏后它会立刻顶上主屏位置。
+    /// 不能当成实体屏——否则不建虚拟屏，Sidecar 连上也没落脚点。
+    /// 11-23 22:52 实测：拔 HDMI 后连续三次「连接后 15 秒内未见显示器」。
+    static let DUMMY_VENDOR: UInt32 = 0x756E6B6E
+    static let DUMMY_MODEL: UInt32 = 0x76697274
+
+    static func isDummy(_ id: CGDirectDisplayID) -> Bool {
+        CGDisplayVendorNumber(id) == DUMMY_VENDOR || CGDisplayModelNumber(id) == DUMMY_MODEL
+    }
+
     static func isVirtual(_ id: CGDirectDisplayID) -> Bool {
         CGDisplayVendorNumber(id) == VIRTUAL_VENDOR
     }
@@ -198,7 +209,7 @@ enum Displays {
 
     /// 实体屏：既不是虚拟屏，也不是 iPad 随航屏
     static func physical() -> CGDirectDisplayID? {
-        ids().first { !isVirtual($0) && !isIPad($0) }
+        ids().first { !isVirtual($0) && !isIPad($0) && !isDummy($0) }
     }
 
     /// 在线屏（含休眠中的）。判断「有没有实体屏」必须用这个：
@@ -214,7 +225,7 @@ enum Displays {
 
     /// 在线的实体屏（含休眠中的）
     static func physicalOnline() -> CGDirectDisplayID? {
-        onlineIDs().first { !isVirtual($0) && !isIPad($0) }
+        onlineIDs().first { !isVirtual($0) && !isIPad($0) && !isDummy($0) }
     }
 
     /// 虚拟屏要不要自动建：只给没有实体屏的机器当落脚点。
@@ -232,7 +243,8 @@ enum Displays {
     /// 当前主屏是不是虚拟屏
     static func mainIsVirtual() -> Bool {
         guard let m = ids().first(where: { CGDisplayIsMain($0) != 0 }) else { return false }
-        return isVirtual(m)
+        // 系统兜底屏也算"虚拟"：它同样不能占主屏位
+        return isVirtual(m) || isDummy(m)
     }
 
     /// 确立主屏归属，返回是否真的动过。规则分两种：

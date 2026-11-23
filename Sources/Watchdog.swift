@@ -8,6 +8,14 @@ import Darwin
 let IPAD_MODEL: UInt32 = 0x69506164
 /// 虚拟屏的 vendorID，和 VirtualScreen.swift 里注册的一致
 let VIRTUAL_VENDOR: UInt32 = 0x1A2B
+/// 系统在没有任何可用屏时自己塞的兜底屏：1920×1080，vendor/model 是
+/// ASCII 的 "unkn"/"virt"。拔掉实体屏后它会立刻顶上主屏位置，不能当实体屏。
+let DUMMY_VENDOR: UInt32 = 0x756E6B6E
+let DUMMY_MODEL: UInt32 = 0x76697274
+
+func isDummy(_ id: CGDirectDisplayID) -> Bool {
+    CGDisplayVendorNumber(id) == DUMMY_VENDOR || CGDisplayModelNumber(id) == DUMMY_MODEL
+}
 let base = NSHomeDirectory() + "/Library/Application Support/ipad-watchdog"
 let pauseFile = base + "/pause"
 let logFile = base + "/watchdog.log"
@@ -246,7 +254,8 @@ func mainIsVirtual() -> Bool {
     var ids = [CGDirectDisplayID](repeating: 0, count: Int(n))
     CGGetActiveDisplayList(n, &ids, &n)
     guard let m = ids.first(where: { CGDisplayIsMain($0) != 0 }) else { return false }
-    return CGDisplayVendorNumber(m) == VIRTUAL_VENDOR
+    // 系统兜底屏也算"虚拟"：它同样不能占主屏位
+    return CGDisplayVendorNumber(m) == VIRTUAL_VENDOR || isDummy(m)
 }
 
 /// 实体屏：既不是虚拟屏，也不是 iPad 随航屏
@@ -256,7 +265,7 @@ func physicalDisplay() -> CGDirectDisplayID? {
     var ids = [CGDirectDisplayID](repeating: 0, count: Int(n))
     CGGetActiveDisplayList(n, &ids, &n)
     return ids.first {
-        CGDisplayVendorNumber($0) != VIRTUAL_VENDOR && CGDisplayModelNumber($0) != IPAD_MODEL
+        CGDisplayVendorNumber($0) != VIRTUAL_VENDOR && CGDisplayModelNumber($0) != IPAD_MODEL && !isDummy($0)
     }
 }
 
