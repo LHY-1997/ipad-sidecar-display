@@ -1071,7 +1071,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+/// 手写入口：helper 模式必须在 AppState 之前退出。
+/// 用 @main 标在 SwiftUI App 上的话，属性包装器会先初始化 AppState
+/// （起 timer、跑 refresh），helper 进程会带着一整套面板逻辑跑，很脏。
 @main
+enum SidecarMain {
+    static func main() {
+        if CommandLine.arguments.contains("--vdisplay-helper") {
+            runVirtualScreenHelper()
+        }
+        SidecarApp.main()
+    }
+}
+
 struct SidecarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var state = AppState()
