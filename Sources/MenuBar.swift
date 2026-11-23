@@ -11,6 +11,9 @@ let targetFile = baseDir + "/target"
 let intervalFile = baseDir + "/interval"
 /// 这个文件存在 = 用户主动关掉了虚拟屏；不存在 = 默认开启
 let vOffFile = baseDir + "/vdisplay.off"
+/// 这个文件存在 = 当前这块虚拟屏是程序自动建的（不是用户手动开的）。
+/// 有实体屏时据此回收，用户手动开的则保留。
+let vAutoFile = baseDir + "/vdisplay.auto"
 /// 用户主动退出面板时创建，watchdog 看到就不再把面板拉起来
 let panelOffFile = baseDir + "/panel.off"
 let watchdogPlist = NSHomeDirectory() + "/Library/LaunchAgents/com.local.ipad-watchdog.plist"
@@ -181,10 +184,26 @@ enum Displays {
         ids().first { !isVirtual($0) && !isIPad($0) }
     }
 
+    /// 在线屏（含休眠中的）。判断「有没有实体屏」必须用这个：
+    /// 显示器休眠时会被从活动列表里摘掉，拿活动列表判断会把休眠当成
+    /// 无头机器，凭空多建一块虚拟屏——12:26 那次就是这么来的。
+    static func onlineIDs() -> [CGDirectDisplayID] {
+        var n: UInt32 = 0
+        CGGetOnlineDisplayList(0, nil, &n)
+        var a = [CGDirectDisplayID](repeating: 0, count: Int(n))
+        CGGetOnlineDisplayList(n, &a, &n)
+        return a
+    }
+
+    /// 在线的实体屏（含休眠中的）
+    static func physicalOnline() -> CGDirectDisplayID? {
+        onlineIDs().first { !isVirtual($0) && !isIPad($0) }
+    }
+
     /// 虚拟屏要不要自动建：只给没有实体屏的机器当落脚点。
     /// 有实体屏还建一块，等于凭空多出一块屏，会打乱主屏归属和 Dock 位置。
     static func needsVirtualScreen() -> Bool {
-        physical() == nil
+        physicalOnline() == nil
     }
 
     /// 主屏的合法候选：实体屏优先，其次 iPad。虚拟屏永远不在候选里。
@@ -233,6 +252,10 @@ final class AppState: ObservableObject {
     @Published var logs: [String] = []
     @Published var interval: Int = 30
     @Published var virtualScreenOn = true
+    /// 连续多少次 refresh 看到实体屏 / 看不到实体屏。给建屏和回收加滞后，
+    /// 免得显示器休眠、唤醒的瞬间状态抖动导致建了又拆。
+    private var physicalTicks = 0
+    private var noPhysicalTicks = 0
 
     /// 上一次把主屏从虚拟屏抢回来的时间，用于防抖（系统自己也会重排显示器，别打架）
     private var lastKickAt = Date.distantPast
@@ -302,12 +325,34 @@ final class AppState: ObservableObject {
         let vOn = VirtualScreen.shared.displayID != nil
         if vOn != virtualScreenOn { virtualScreenOn = vOn }
 
-        // 没有实体屏就必须有虚拟屏当落脚点：开机时延迟建屏还没落地、或中途
-        // 拔掉了实体屏，都靠这里补上。用户手动关过（vdisplay.off）则不插手。
-        if !vOn, Displays.needsVirtualScreen(),
+        // 用在线屏判断有没有实体屏：显示器休眠时活动列表里会没有它，
+        // 拿活动列表判断会把休眠当成无头机器，凭空多建一块虚拟屏。
+        let hasPhysical = Displays.physicalOnline() != nil
+        if hasPhysical {
+            physicalTicks += 1
+            noPhysicalTicks = 0
+        } else {
+            noPhysicalTicks += 1
+            physicalTicks = 0
+        }
+
+        // 有实体屏就不该有虚拟屏。连续 3 次（约 6 秒）确认实体屏在位才回收，
+        // 只回收自动建的那块，用户手动开的不动。
+        if vOn, hasPhysical, physicalTicks >= 3,
+           !FileManager.default.fileExists(atPath: vOffFile),
+           FileManager.default.fileExists(atPath: vAutoFile) {
+            VirtualScreen.shared.turnOff()
+            try? FileManager.default.removeItem(atPath: vAutoFile)
+            virtualScreenOn = false
+            vlog("🧹 实体屏在位，回收自动创建的虚拟屏")
+        }
+
+        // 没有实体屏才补建，且要连续 2 次（约 4 秒）都读不到，避免状态抖动。
+        if !vOn, !hasPhysical, noPhysicalTicks >= 2,
            !FileManager.default.fileExists(atPath: vOffFile),
            VirtualScreen.shared.turnOn() != nil {
             virtualScreenOn = true
+            try? "auto".write(toFile: vAutoFile, atomically: true, encoding: .utf8)
             vlog("🖥️ 没有实体屏，已自动创建虚拟屏作为落脚点")
         }
 
@@ -471,6 +516,8 @@ final class AppState: ObservableObject {
     func setVirtualScreen(_ on: Bool) {
         if on {
             try? FileManager.default.removeItem(atPath: vOffFile)
+            // 用户主动开的，别让 refresh 当成"自动建的"回收掉
+            try? FileManager.default.removeItem(atPath: vAutoFile)
             if VirtualScreen.shared.turnOn() != nil {
                 virtualScreenOn = true
                 message = "虚拟屏已开启"
@@ -839,6 +886,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard VirtualScreen.shared.displayID == nil else { return }
             guard Displays.needsVirtualScreen() else { return }
             if VirtualScreen.shared.turnOn() != nil {
+                try? "auto".write(toFile: vAutoFile, atomically: true, encoding: .utf8)
                 vlog("🖥️ 没有实体屏，已自动创建虚拟屏作为落脚点")
             }
         }
