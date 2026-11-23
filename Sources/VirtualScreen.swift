@@ -48,9 +48,6 @@ final class VirtualScreen {
 
     /// 必须强引用持有，一释放虚拟屏就消失
     private var held: AnyObject?
-    /// descriptor / mode / settings 也要一并持有。applySettings 是异步的，
-    /// 返回后内部还要访问它们，ARC 提前释放就会踩空。
-    private var heldParts: [AnyObject] = []
     private(set) var displayID: CGDirectDisplayID?
 
     var isOn: Bool { held != nil }
@@ -163,17 +160,12 @@ final class VirtualScreen {
         setU32(settings, SetCls, "setRotation:", 0)
 
         // --- apply ---
-        // 必须先强引用住 vd / d / mode / settings，再调 applySettings。
-        // applySettings 是异步的：它返回后内部仍会访问 descriptor 和 modes。
-        // -O 优化下 ARC 会在最后一次使用后立刻释放局部变量，于是踩到已释放内存，
-        // 表现为 -[CGVirtualDisplay applySettings:] 在 0xb0 处 SIGSEGV（实测崩过 30 多次）。
-        held = vd
-        heldParts = [d, mode, settings]
         setObj(vd, VdCls, "applySettings:", settings)
 
         guard let idImp = instIMP(VdCls, "displayID") else { vlog("❌ displayID 不可用"); return nil }
         let did = unsafeBitCast(idImp, to: IdF.self)(vd, NSSelectorFromString("displayID"))
 
+        held = vd
         displayID = did
         vlog("✅ 虚拟屏已创建  displayID=\(did)  逻辑 \(logicalW)x\(logicalH) @\(Int(refresh))Hz")
 
@@ -195,25 +187,13 @@ final class VirtualScreen {
         return did
     }
 
-    /// 销毁虚拟屏。
-    /// 光把 held 置空不够：对象释放后系统不保证立刻移除这块显示器，实测能残留几分钟。
-    /// 释放后再提交一次显示配置变更，把这块屏真正踢掉。
+    /// 销毁虚拟屏。屏会立刻从系统消失。
     func turnOff() {
         guard held != nil else { return }
         let old = displayID
         held = nil
         displayID = nil
         vlog("── 虚拟屏已关闭（原 displayID=\(old.map(String.init) ?? "?")）")
-
-        var cfg: CGDisplayConfigRef?
-        if CGBeginDisplayConfiguration(&cfg) == .success, let cfg = cfg {
-            let r = CGCompleteDisplayConfiguration(cfg, .forSession)
-            if r == .success {
-                vlog("↩️ 已提交显示配置变更，虚拟屏应已移除")
-            } else {
-                vlog("⚠️ 显示配置变更失败 err=\(r.rawValue)")
-            }
-        }
     }
 
     /// 切到 HiDPI 模式（物理 = 逻辑 × 2）

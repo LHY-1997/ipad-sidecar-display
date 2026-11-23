@@ -33,7 +33,7 @@ macOS 的随航（Sidecar）功能本身很好用，但把它当**主显示器**
 - **弹窗兜底**：万一真失败，弹窗进程会在十秒内被清掉
 - **菜单栏图标**：常驻菜单栏，点一下弹出面板（v2.1 起）。面板里手动连接、断开、暂停自动重连
 - **自带 5K HiDPI 虚拟屏**：面板进程里直接建一块 2560×1440 逻辑 / 5120×2880 物理的假屏，无头 Mac mini 开机就有画面，不用装 BetterDisplay
-- **虚拟屏开关**：面板里一键开关，默认开启；关掉会提示会丢随航。关闭只对当前运行有效，重启后自动恢复开启
+- **虚拟屏开关**：面板里一键开关，默认开启；关掉会提示会丢随航
 - **面板挂了自动拉起**：虚拟屏由面板进程持有，watchdog 每 10 秒看一眼，面板不在了就重新拉起并重建虚拟屏（实测 kill -9 后 7 秒恢复）
 - **轻量**：不额外跑进程，整套只有 watchdog + 面板（BetterDisplay 光建假屏就占 88 MB）
 - **通用二进制**：Apple Silicon 和 Intel 都支持
@@ -152,6 +152,7 @@ SidecarDisplayManager *mgr = [SidecarDisplayManager new];
 **开关在面板里，默认开启。** 关掉会弹警告：实测关掉虚拟屏后 iPad 随航会**当场断开**，系统退到一块 1920×1080 的兜底屏（1x，HiDPI 没了），十几秒后才自动重连回来。
 
 开关状态记在 `~/Library/Application Support/ipad-watchdog/vdisplay.off`：文件存在 = 关闭，不存在 = 开启。所以想强制恢复默认，删掉这个文件重启即可。
+
 四个私有类都在 **CoreGraphics** 里（不是 `CoreDisplay`）：
 
 ```
@@ -228,7 +229,7 @@ let opts = [kCGDisplayShowDuplicateLowResolutionModes as String: true] as CFDict
 | `quiet` | 静默时段，内容如 `2 7` 表示 02:00-07:00 不连接 |
 | `watchdog.log` | 日志，只在有事件时写 |
 | `vdisplay.log` | 虚拟屏日志（建屏、切 HiDPI、开关） |
-| `vdisplay.off` | 旧版本遗留的关闭标记，2.3 起不再写入，启动时自动清理 |
+| `vdisplay.off` | 存在 = 虚拟屏被手动关闭，不存在 = 默认开启 |
 | `panel.off` | 存在 = 用户主动退出了面板，watchdog 不再拉起；重新打开面板会自动清掉 |
 
 自检：
