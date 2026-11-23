@@ -570,6 +570,28 @@ final class AppState: ObservableObject {
     }
 
     func disconnect() {
+        // 没有实体屏时，iPad 是唯一的屏幕，断开之后什么都看不见了，
+        // 而断开又会顺手暂停自动重连，等于自己把恢复手段也关掉。先问一句。
+        if Displays.physicalOnline() == nil {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "断开 iPad 随航？"
+            alert.informativeText = """
+            当前没有实体屏，iPad 是唯一的屏幕。断开之后：
+
+            • 画面会立刻消失，桌面会退到一块看不见的虚拟屏上
+            • 自动重连会一起暂停，不会自己连回来
+            • 想恢复得手动点「连接随航」，可这时候你也看不到面板
+
+            建议先接上外接显示器，或者别断开。
+
+            确定要断开吗？
+            """
+            alert.addButton(withTitle: "断开")
+            alert.addButton(withTitle: "取消")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+
         busy = true
         // 先暂停自动重连，否则 30 秒后又被拉回来
         if !watchdogPaused {
@@ -618,6 +640,25 @@ final class AppState: ObservableObject {
             try? FileManager.default.removeItem(atPath: pauseFile)
             message = "自动重连已恢复"
         } else {
+            // 没有实体屏时暂停，等于把唯一的恢复手段关掉：iPad 一断就回不来，
+            // 而那时候面板也看不见，想恢复都没地方点。
+            if Displays.physicalOnline() == nil {
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = "暂停自动重连？"
+                alert.informativeText = """
+                当前没有实体屏，iPad 是唯一的屏幕。暂停之后：
+
+                • iPad 一旦断开，不会再自动连回来
+                • 那时候你也看不到面板，没法手动恢复
+                • 只能重启面板或者等下次登录
+
+                确定要暂停吗？
+                """
+                alert.addButton(withTitle: "暂停")
+                alert.addButton(withTitle: "取消")
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+            }
             FileManager.default.createFile(atPath: pauseFile, contents: nil)
             message = "自动重连已暂停"
         }
