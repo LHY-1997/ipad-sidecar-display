@@ -9,7 +9,7 @@ AGENTS="$HOME/Library/LaunchAgents"
 STATE="$SUPPORT/original-services.state"
 GUI="gui/$(id -u)"
 ORIGINAL_APP="/Applications/iPad随航.app"
-TEST_APP="/Applications/iPad随航 Test.app"
+TEST_APP="/Applications/iPad随航 2.4.1.app"
 TEST_LABELS=(com.local.ipad-watchdog-test com.local.ipad-sidecar-test-ui)
 ORIGINAL_LABELS=(com.local.ipad-watchdog com.local.ipad-sidecar-ui)
 mkdir -p "$SUPPORT"
@@ -37,6 +37,7 @@ stop_test() {
         fi
     done
     stop_app 'iPad随航 Test' || return 1
+    stop_app 'iPad随航241' || return 1
     rm -f -- "$SUPPORT/test-active"
 }
 
@@ -70,15 +71,16 @@ restore_original() {
 }
 
 if [[ "$MODE" == original ]]; then
+    [[ -d "$ORIGINAL_APP" ]] || { echo "原版应用不在“应用程序”文件夹中，请先安装原版。" >&2; exit 1; }
     stop_test
     restore_original
     echo "已切换回原版 2.4，测试版仍保留在应用程序中。"
     exit 0
 fi
 
-[[ -d "$TEST_APP" && -x "$SUPPORT/ipad-watchdog" ]] || { echo "请先安装 Test 版。" >&2; exit 1; }
+[[ -d "$TEST_APP" && -x "$SUPPORT/ipad-watchdog" ]] || { echo "请先安装 2.4.1 版。" >&2; exit 1; }
 [[ -f "$AGENTS/com.local.ipad-watchdog-test.plist" && -f "$AGENTS/com.local.ipad-sidecar-test-ui.plist" ]] || {
-    echo "测试版后台服务缺失，请重新运行安装。" >&2; exit 1;
+    echo "2.4.1 后台服务缺失，请重新运行安装。" >&2; exit 1;
 }
 disabled_services=$(launchctl print-disabled "$GUI") || { echo "无法读取后台服务状态。" >&2; exit 1; }
 if [[ ! -f "$STATE" ]]; then
@@ -124,4 +126,4 @@ for label in "${TEST_LABELS[@]}"; do
     launchctl print "$GUI/$label" >/dev/null
 done
 activation_complete=true
-echo "已切换到 Test 版。原版后台服务已暂停，使用「恢复原版.command」可切回。"
+echo "已切换到 2.4.1 版。原版后台服务已暂停，使用「恢复原版.command」可切回。"

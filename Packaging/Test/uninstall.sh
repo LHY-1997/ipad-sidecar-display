@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SUPPORT="$HOME/Library/Application Support/ipad-watchdog-test"
-DEST="/Applications/iPad随航 Test.app"
+DEST="/Applications/iPad随航 2.4.1.app"
 AGENTS="$HOME/Library/LaunchAgents"
 if [[ -e "$DEST" ]]; then
     [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$DEST/Contents/Info.plist")" == "local.ipad.sidecar.test" ]] || {
@@ -15,4 +15,4 @@ fi
 rm -f -- "$AGENTS/com.local.ipad-watchdog-test.plist" "$AGENTS/com.local.ipad-sidecar-test-ui.plist"
 rm -rf -- "$DEST" "$SUPPORT"
 defaults delete local.ipad.sidecar.test >/dev/null 2>&1 || true
-echo "已卸载 Test 版。"
+echo "已卸载 2.4.1 版。"

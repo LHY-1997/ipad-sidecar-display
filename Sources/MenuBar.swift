@@ -1112,8 +1112,8 @@ enum SidecarMain {
             app.setActivationPolicy(.regular)
             app.activate(ignoringOtherApps: true)
             let alert = NSAlert()
-            alert.messageText = "请先切换到 Test 版"
-            alert.informativeText = "请打开测试安装包中的「切换 Test.command」，它会暂停原版后台服务并启动测试版。"
+            alert.messageText = "请先切换到 2.4.1"
+            alert.informativeText = "请打开安装包中的「切换到 2.4.1.command」，它会切换到 2.4.1 版本。"
             alert.addButton(withTitle: "好")
             alert.runModal()
             return

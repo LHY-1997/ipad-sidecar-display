@@ -22,13 +22,13 @@ ZIP_NAME="iPad-Sidecar-Display-${VERSION}.zip"
 MIN_MACOS="13.0"
 
 if [ "${1:-}" = "--test" ]; then
-    APP_NAME="iPad随航 Test.app"
-    APP_DISPLAY_NAME="iPad 随航 Test"
-    APP_EXECUTABLE="iPad随航 Test"
-    APP_BUNDLE_NAME="iPad随航 Test"
+    APP_NAME="iPad随航 2.4.1.app"
+    APP_DISPLAY_NAME="iPad 随航 2.4.1"
+    APP_EXECUTABLE="iPad随航241"
+    APP_BUNDLE_NAME="iPad随航241"
     APP_BUNDLE_ID="local.ipad.sidecar.test"
     PACKAGE_DIR="Packaging/Test"
-    ZIP_NAME="iPad-Sidecar-Display-${VERSION}-Test.zip"
+    ZIP_NAME="iPad-Sidecar-Display-${VERSION}-Standalone.zip"
     SWIFT_FLAGS=(-D SIDECAR_TEST)
 elif [ "$#" -ne 0 ]; then
     echo "用法：$0 [--test]" >&2
@@ -113,8 +113,8 @@ cp "$PACKAGE_DIR/install.sh" "$PACKAGE_DIR/uninstall.sh" "$DIST/"
 cp "$PACKAGE_DIR/安装.command" "$PACKAGE_DIR/卸载.command" "$DIST/"
 cp "$PACKAGE_DIR/README.md" "$DIST/README.md"
 if [ "${1:-}" = "--test" ]; then
-    cp "$PACKAGE_DIR/activate.sh" "$PACKAGE_DIR/切换 Test.command" "$PACKAGE_DIR/恢复原版.command" "$DIST/"
-    chmod +x "$DIST/activate.sh" "$DIST/切换 Test.command" "$DIST/恢复原版.command"
+    cp "$PACKAGE_DIR/activate.sh" "$PACKAGE_DIR/切换到 2.4.1.command" "$PACKAGE_DIR/恢复原版.command" "$DIST/"
+    chmod +x "$DIST/activate.sh" "$DIST/切换到 2.4.1.command" "$DIST/恢复原版.command"
 fi
 chmod +x "$DIST/install.sh" "$DIST/uninstall.sh" "$DIST/安装.command" "$DIST/卸载.command"
 ok "安装脚本"

@@ -1,6 +1,6 @@
 #!/bin/bash
 cd "$(dirname "$0")" || exit 1
-echo "安装 iPad 随航 Test"
+echo "安装 iPad 随航 2.4.1"
 bash ./install.sh
 result=$?
 echo ""

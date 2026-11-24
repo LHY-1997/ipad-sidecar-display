@@ -3,8 +3,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 [[ "$(uname -s)" == Darwin && "$EUID" != 0 ]] || { echo "请使用当前 macOS 用户运行。" >&2; exit 1; }
-APP_NAME="iPad随航 Test.app"
+APP_NAME="iPad随航 2.4.1.app"
 DEST="/Applications/$APP_NAME"
+OLD_DEST="/Applications/iPad随航 Test.app"
 SUPPORT="$HOME/Library/Application Support/ipad-watchdog-test"
 AGENTS="$HOME/Library/LaunchAgents"
 GUI="gui/$(id -u)"
@@ -25,15 +26,40 @@ if [[ -e "$DEST" ]]; then
     }
 fi
 
+if [[ -e "$OLD_DEST" ]]; then
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$OLD_DEST/Contents/Info.plist")" == "local.ipad.sidecar.test" ]] || {
+        echo "旧测试应用的标识不匹配，已停止。" >&2; exit 1;
+    }
+fi
 mkdir -p "$SUPPORT" "$AGENTS"
 STAGE=$(mktemp -d /Applications/.ipad-sidecar-test.XXXXXX)
+if [[ -d "$OLD_DEST" && -f "$SUPPORT/activate.sh" ]]; then
+    mkdir -p "$STAGE/previous-support" "$STAGE/previous-agents"
+    for name in activate.sh ipad-watchdog ipad-here original-services.state test-active; do
+        if [[ -f "$SUPPORT/$name" ]]; then cp -p "$SUPPORT/$name" "$STAGE/previous-support/$name"; fi
+    done
+    for label in com.local.ipad-watchdog-test com.local.ipad-sidecar-test-ui; do
+        if [[ -f "$AGENTS/$label.plist" ]]; then cp -p "$AGENTS/$label.plist" "$STAGE/previous-agents/$label.plist"; fi
+    done
+fi
 cleanup() {
     local result=$?
-    rm -rf -- "$STAGE"
-    if [[ "$result" -ne 0 && -f "$SUPPORT/original-services.state" && -f "$SUPPORT/activate.sh" ]]; then
+    if [[ "$result" -ne 0 && -d "$OLD_DEST" && -f "$STAGE/previous-support/activate.sh" ]]; then
+        echo "安装未完成，正在恢复原有测试版……" >&2
+        launchctl bootout "$GUI/com.local.ipad-watchdog-test" 2>/dev/null || true
+        launchctl bootout "$GUI/com.local.ipad-sidecar-test-ui" 2>/dev/null || true
+        pkill -x 'iPad随航241' 2>/dev/null || true
+        cp -p "$STAGE/previous-support/"* "$SUPPORT/" || true
+        cp -p "$STAGE/previous-agents/"* "$AGENTS/" 2>/dev/null || true
+        for label in com.local.ipad-watchdog-test com.local.ipad-sidecar-test-ui; do
+            launchctl enable "$GUI/$label" 2>/dev/null || true
+            launchctl bootstrap "$GUI" "$AGENTS/$label.plist" 2>/dev/null || true
+        done
+    elif [[ "$result" -ne 0 && -f "$SUPPORT/original-services.state" && -f "$SUPPORT/activate.sh" ]]; then
         echo "安装未完成，正在恢复原版服务……" >&2
         bash "$SUPPORT/activate.sh" original || true
     fi
+    rm -rf -- "$STAGE"
 }
 trap cleanup EXIT
 ditto "payload/$APP_NAME" "$STAGE/$APP_NAME"
@@ -43,12 +69,13 @@ codesign --verify --deep --strict "$STAGE/$APP_NAME"
 launchctl bootout "$GUI/com.local.ipad-watchdog-test" 2>/dev/null || true
 launchctl bootout "$GUI/com.local.ipad-sidecar-test-ui" 2>/dev/null || true
 pkill -x 'iPad随航 Test' 2>/dev/null || true
+pkill -x 'iPad随航241' 2>/dev/null || true
 rm -rf -- "$DEST"
 mv "$STAGE/$APP_NAME" "$DEST"
 cp payload/ipad-watchdog "$SUPPORT/ipad-watchdog"
 cp payload/ipad-here "$SUPPORT/ipad-here"
-cp activate.sh '切换 Test.command' '恢复原版.command' "$SUPPORT/"
-chmod +x "$SUPPORT/ipad-watchdog" "$SUPPORT/ipad-here" "$SUPPORT/activate.sh" "$SUPPORT/切换 Test.command" "$SUPPORT/恢复原版.command"
+cp activate.sh '切换到 2.4.1.command' '恢复原版.command' "$SUPPORT/"
+chmod +x "$SUPPORT/ipad-watchdog" "$SUPPORT/ipad-here" "$SUPPORT/activate.sh" "$SUPPORT/切换到 2.4.1.command" "$SUPPORT/恢复原版.command"
 xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
 
 SUPPORT_XML=$(printf '%s' "$SUPPORT" | sed -e 's/\&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')
@@ -75,6 +102,7 @@ cat > "$AGENTS/com.local.ipad-sidecar-test-ui.plist" <<PLIST
 PLIST
 plutil -lint "$AGENTS/com.local.ipad-watchdog-test.plist" "$AGENTS/com.local.ipad-sidecar-test-ui.plist"
 
-echo "测试版已安装，正在切换到 Test 模式。"
+echo "2.4.1 已安装，正在切换到新版本。"
 bash "$SUPPORT/activate.sh" test
-echo "安装完成：iPad 随航 Test。"
+rm -rf -- "$OLD_DEST"
+echo "安装完成：iPad 随航 2.4.1。"
