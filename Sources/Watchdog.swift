@@ -1,17 +1,15 @@
 import Foundation
 import ObjectiveC
 import CoreGraphics
-import CoreAudio
-import IOKit
 import Darwin
 
-let IPAD_MODEL: UInt32 = 0x69506164
+let IPAD_MODEL = DisplayInventory.ipadModel
 /// 虚拟屏的 vendorID，和 VirtualScreen.swift 里注册的一致
-let VIRTUAL_VENDOR: UInt32 = 0x1A2B
+let VIRTUAL_VENDOR = DisplayInventory.virtualVendor
 /// 系统在没有任何可用屏时自己塞的兜底屏：1920×1080，vendor/model 是
 /// ASCII 的 "unkn"/"virt"。拔掉实体屏后它会立刻顶上主屏位置，不能当实体屏。
-let DUMMY_VENDOR: UInt32 = 0x756E6B6E
-let DUMMY_MODEL: UInt32 = 0x76697274
+let DUMMY_VENDOR = DisplayInventory.dummyVendor
+let DUMMY_MODEL = DisplayInventory.dummyModel
 
 func isDummy(_ id: CGDirectDisplayID) -> Bool {
     CGDisplayVendorNumber(id) == DUMMY_VENDOR || CGDisplayModelNumber(id) == DUMMY_MODEL
@@ -33,11 +31,6 @@ let lockFile = base + "/.lock"
 let notifyFile = base + "/notify-disconnect"
 /// 本次断开周期内已经提示过，避免每 10 秒弹一次
 let notifiedFile = base + "/notified"
-/// 开机后待应用：把 iPad 顶成主屏。内容是本轮开机的 boot time。
-let mainIpadFile = base + "/main-ipad"
-/// 已应用过的 boot time，用来区分「系统重启」和「面板自己重启」
-let mainIpadDoneFile = base + "/main-ipad.done"
-
 // MARK: - 基础 IO
 
 func log(_ m: String) {
@@ -105,71 +98,6 @@ func acquireLock() -> Bool {
     if fd < 0 { return false }
     if flock(fd, LOCK_EX | LOCK_NB) != 0 { return false }
     return true   // fd 不关，进程退出时自动释放
-}
-
-// MARK: - 屏幕状态
-
-func screenIsAwake() -> Bool {
-    CGDisplayIsAsleep(CGMainDisplayID()) == 0
-}
-
-/// 屏幕是否锁定。key 只在锁屏时存在，未锁屏时读不到，所以默认 false。
-func screenIsLocked() -> Bool {
-    guard let d = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
-    return (d["CGSSessionScreenIsLocked"] as? Bool) ?? false
-}
-
-/// 默认输出设备当前是否在出声——看视频、听音乐时人在，但键鼠可以几十分钟不动
-func audioIsPlaying() -> Bool {
-    var dev = AudioDeviceID(0)
-    var sz = UInt32(MemoryLayout<AudioDeviceID>.size)
-    var a = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-                                       mScope: kAudioObjectPropertyScopeGlobal,
-                                       mElement: kAudioObjectPropertyElementMain)
-    guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &a, 0, nil, &sz, &dev) == noErr,
-          dev != 0 else { return false }
-    var run: UInt32 = 0
-    var rs = UInt32(MemoryLayout<UInt32>.size)
-    var ra = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
-                                        mScope: kAudioObjectPropertyScopeGlobal,
-                                        mElement: kAudioObjectPropertyElementMain)
-    guard AudioObjectGetPropertyData(dev, &ra, 0, nil, &rs, &run) == noErr else { return false }
-    return run != 0
-}
-
-/// 键鼠空闲秒数
-func userIdleSeconds() -> Double {
-    var iter: io_iterator_t = 0
-    guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOHIDSystem"), &iter) == KERN_SUCCESS else { return 9999 }
-    defer { IOObjectRelease(iter) }
-    let svc = IOIteratorNext(iter)
-    guard svc != 0 else { return 9999 }
-    defer { IOObjectRelease(svc) }
-    var props: Unmanaged<CFMutableDictionary>?
-    guard IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
-          let dict = props?.takeRetainedValue() as? [String: Any],
-          let idle = dict["HIDIdleTime"] as? Int64 else { return 9999 }
-    return Double(idle) / 1_000_000_000
-}
-
-/// 人是否还在电脑前。
-///
-/// 只看"屏幕熄没熄"是不够的——显示器设成永不关闭时，这个判据永远为真，
-/// 人走了照样每 10 秒发起一次连接，弹窗又回来了。
-/// 所以按可靠性从高到低叠加判断：
-///   1. 熄屏 / 锁屏     → 明确离开
-///   2. 键鼠 5 分钟内有动 → 明确在用
-///   3. 正在出声        → 看视频听歌，鼠标不动也算在
-///   4. 键鼠 30 分钟内动过 → 宽容期
-///   5. 全不满足        → 人走了
-func userIsHere() -> Bool {
-    if !screenIsAwake() { return false }
-    if screenIsLocked() { return false }
-    let idle = userIdleSeconds()
-    if idle < 300 { return true }
-    if audioIsPlaying() { return true }
-    if idle < 1800 { return true }
-    return false
 }
 
 // MARK: - 弹窗拦截
@@ -272,9 +200,7 @@ func physicalDisplay() -> CGDirectDisplayID? {
     CGGetActiveDisplayList(0, nil, &n)
     var ids = [CGDirectDisplayID](repeating: 0, count: Int(n))
     CGGetActiveDisplayList(n, &ids, &n)
-    return ids.first {
-        CGDisplayVendorNumber($0) != VIRTUAL_VENDOR && CGDisplayModelNumber($0) != IPAD_MODEL && !isDummy($0)
-    }
+    return ids.first { DisplayInventory.describe($0).isPhysical }
 }
 
 /// 确立主屏归属，返回是否真的动过。规则分两种：
@@ -292,19 +218,6 @@ func enforceMain() -> Bool {
         guard !alreadyMain else { return false }
     }
     return makeMain(target)
-}
-
-/// 开机后第一次连上 iPad：按用户要求默认把它顶成主屏，不管有没有实体屏。
-/// 用户场景（11-23 22:37）：重启后自动重连开了，但主屏还留在实体屏上；
-/// 没接实体屏的场合主屏就会指向一块不存在的屏，什么都看不到。
-/// 应用一次就把 boot time 记进 .done，之后用户手动改主屏不会被抢回来。
-func applyBootMainPreference() -> Bool {
-    guard FileManager.default.fileExists(atPath: mainIpadFile) else { return false }
-    guard let ipad = findIPad() else { return false }
-    let stamp = (try? String(contentsOfFile: mainIpadFile, encoding: .utf8)) ?? ""
-    try? stamp.write(toFile: mainIpadDoneFile, atomically: true, encoding: .utf8)
-    try? FileManager.default.removeItem(atPath: mainIpadFile)
-    return makeMain(ipad)
 }
 
 /// 返回：-1 组件加载失败，0 设备不可见，1 有设备
@@ -374,83 +287,73 @@ func connect(_ device: AnyObject) -> (ok: Bool, msg: String) {
 
 // ===== 主流程 =====
 
-// 面板是虚拟屏的持有者，先确保它活着（暂停自动重连不影响这一步）
-ensurePanelRunning()
+@main
+enum WatchdogMain {
+    static func main() {
+        // 先保证面板可以创建和维护虚拟屏，即使用户暂停了重连。
+        ensurePanelRunning()
+        if FileManager.default.fileExists(atPath: pauseFile) { return }
 
-if FileManager.default.fileExists(atPath: pauseFile) { exit(0) }
+        if hasPopupWindow() { squashPopup() }
 
-// 0) 先把残留弹窗收掉
-// 手动从菜单栏点连接失败时也会弹这个窗，那时 watchdog 不在 connect 流程里，
-// 没人管它就会一直挂在屏幕上。每 10 秒扫一次，顺手清掉。
-if hasPopupWindow() { squashPopup() }
+        // 用和面板相同的在线屏判断，包含休眠中的实体屏。
+        // 查询失败时等待下一轮，避免误发起连接。
+        guard let mode = DisplayInventory.currentMode() else { return }
 
-// 1) 人不在 → 不需要连
-// 熄屏、锁屏、或长时间无操作且无音频，都算不在。
-if !userIsHere() { exit(0) }
-
-// 2) 屏已经在 → 按规则校正主屏归属
-// 有实体屏时实体屏/iPad 由用户决定；没有实体屏时 iPad 必须在主屏位
-if findIPad() != nil {
-    // iPad 在线了，说明这一轮断开结束了，下次断开重新提示一次
-    try? FileManager.default.removeItem(atPath: notifiedFile)
-    if applyBootMainPreference() {
-        log("开机默认：iPad 已设为主屏")
-        exit(0)
-    }
-    if enforceMain() { log("主屏已归位") }
-    exit(0)
-}
-
-// 3) 屏不在，看设备
-let p = probeDevices()
-if p.state <= 0 { exit(0) }   // 设备不可见：静默退出
-
-// 4) 单实例锁：拿到锁才继续
-if !acquireLock() { exit(0) }
-
-// 5) 发起连接
-let r = connect(p.device!)
-
-if !r.ok {
-    squashPopup()
-    log("连接失败: \(r.msg)")
-    // 这个提示的用途是告诉用户「可以暂停自动重连」，不是提醒去重连——重连本来就一直在跑。
-    // 有实体屏时 iPad 是副屏，掉了得说一声，用户才知道有这个开关。
-    // 没有实体屏时不提示：iPad 是唯一的物理可见屏，它连不上用户什么都看不见，
-    // 弹窗只会落在虚拟屏上——而虚拟屏没有物理输出，等于没提示。
-    if physicalDisplay() != nil {
-        postNotifyOnce()
-    } else {
-        log("连接失败，无实体屏，不提示（弹了也落在看不见的虚拟屏上）")
-    }
-    exit(0)
-}
-
-// 6) 等屏出现，期间继续盯弹窗
-let dl = Date().addingTimeInterval(15)
-while Date() < dl {
-    if findIPad() != nil {
-        try? FileManager.default.removeItem(atPath: notifiedFile)
-        // 开机后第一次连上：无条件顶成主屏
-        if applyBootMainPreference() {
-            log("开机默认：iPad 已设为主屏")
-            exit(0)
+        if let ipad = findIPad() {
+            try? FileManager.default.removeItem(atPath: notifiedFile)
+            if mode != .physical {
+                if CGDisplayIsMain(ipad) == 0 || CGDisplayBounds(ipad).origin != .zero {
+                    if makeMain(ipad) { log("无实体屏：iPad 已设为主屏") }
+                }
+            } else if enforceMain() {
+                log("主屏已归位")
+            }
+            return
         }
-        // 之后按规则定主屏：有实体屏时由用户选，没有实体屏则 iPad 必须在主屏位
-        if enforceMain() {
-            log("随航已就绪，主屏已归位")
-        } else {
-            log("随航已就绪，保持当前主屏")
+
+        // 虚拟屏上线后才自动连接，避免启动时屏幕还在枚举就抢先连接。
+        guard mode == .headlessReady else { return }
+        let probe = probeDevices()
+        guard probe.state > 0, let device = probe.device else { return }
+        guard acquireLock() else { return }
+
+        // 给刚登录时的显示器枚举一点时间，再复核实体屏是否已接入。
+        Thread.sleep(forTimeInterval: 2)
+        guard DisplayInventory.currentMode() == .headlessReady else { return }
+        let result = connect(device)
+        if !result.ok {
+            squashPopup()
+            log("连接失败: \(result.msg)")
+            if physicalDisplay() != nil { postNotifyOnce() }
+            return
         }
-        exit(0)
-    }
-    if hasPopupWindow() {
+
+        let deadline = Date().addingTimeInterval(15)
+        while Date() < deadline {
+            guard let currentMode = DisplayInventory.currentMode() else { return }
+            if currentMode == .physical {
+                log("实体屏已接入，停止本轮自动连接检查")
+                return
+            }
+            if let ipad = findIPad() {
+                try? FileManager.default.removeItem(atPath: notifiedFile)
+                if makeMain(ipad) {
+                    log("无实体屏：随航已就绪，iPad 已设为主屏")
+                } else {
+                    log("随航已连接，设置 iPad 主屏失败，将在下一轮重试")
+                }
+                return
+            }
+            if hasPopupWindow() {
+                squashPopup()
+                log("连接期间弹窗已拦截")
+                return
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+
+        log("连接后 15 秒内未见显示器")
         squashPopup()
-        log("连接期间弹窗已拦截")
-        exit(0)
     }
-    RunLoop.current.run(until: Date().addingTimeInterval(0.3))
 }
-
-log("连接后 15 秒内未见显示器")
-squashPopup()

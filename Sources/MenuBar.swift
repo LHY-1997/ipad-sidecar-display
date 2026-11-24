@@ -3,7 +3,7 @@ import AppKit
 import CoreGraphics
 import ObjectiveC
 
-let IPAD_MODEL: UInt32 = 0x69506164
+let IPAD_MODEL = DisplayInventory.ipadModel
 let baseDir = NSHomeDirectory() + "/Library/Application Support/ipad-watchdog"
 let pauseFile = baseDir + "/pause"
 let logFile = baseDir + "/watchdog.log"
@@ -13,10 +13,6 @@ let intervalFile = baseDir + "/interval"
 let notifyFile = baseDir + "/notify-disconnect"
 /// watchdog 用来记「本次断开已经提示过」，避免每 10 秒弹一次
 let notifiedFile = baseDir + "/notified"
-/// 开机后待应用：把 iPad 顶成主屏，内容是这一轮开机的 boot time
-let mainIpadFile = baseDir + "/main-ipad"
-/// watchdog 应用过之后写下的 boot time，用来区分系统重启和面板自己重启
-let mainIpadDoneFile = baseDir + "/main-ipad.done"
 /// 这个文件存在 = 用户主动关掉了虚拟屏；不存在 = 默认开启
 let vOffFile = baseDir + "/vdisplay.off"
 /// 这个文件存在 = 当前这块虚拟屏是程序自动建的（不是用户手动开的）。
@@ -186,14 +182,14 @@ enum Displays {
     // MARK: 虚拟屏 / 实体屏
 
     /// 虚拟屏的 vendorID，和 VirtualScreen.swift 里注册的一致
-    static let VIRTUAL_VENDOR: UInt32 = 0x1A2B
+    static let VIRTUAL_VENDOR = DisplayInventory.virtualVendor
 
     /// 系统在没有任何可用屏时自己塞的兜底屏：1920×1080，vendor/model 是
     /// ASCII 的 "unkn"/"virt"。拔掉实体屏后它会立刻顶上主屏位置。
     /// 不能当成实体屏——否则不建虚拟屏，Sidecar 连上也没落脚点。
     /// 11-23 22:52 实测：拔 HDMI 后连续三次「连接后 15 秒内未见显示器」。
-    static let DUMMY_VENDOR: UInt32 = 0x756E6B6E
-    static let DUMMY_MODEL: UInt32 = 0x76697274
+    static let DUMMY_VENDOR = DisplayInventory.dummyVendor
+    static let DUMMY_MODEL = DisplayInventory.dummyModel
 
     static func isDummy(_ id: CGDirectDisplayID) -> Bool {
         CGDisplayVendorNumber(id) == DUMMY_VENDOR || CGDisplayModelNumber(id) == DUMMY_MODEL
@@ -209,29 +205,22 @@ enum Displays {
 
     /// 实体屏：既不是虚拟屏，也不是 iPad 随航屏
     static func physical() -> CGDirectDisplayID? {
-        ids().first { !isVirtual($0) && !isIPad($0) && !isDummy($0) }
+        ids().first { DisplayInventory.describe($0).isPhysical }
     }
 
     /// 在线屏（含休眠中的）。判断「有没有实体屏」必须用这个：
     /// 显示器休眠时会被从活动列表里摘掉，拿活动列表判断会把休眠当成
     /// 无头机器，凭空多建一块虚拟屏——12:26 那次就是这么来的。
-    static func onlineIDs() -> [CGDirectDisplayID] {
-        var n: UInt32 = 0
-        CGGetOnlineDisplayList(0, nil, &n)
-        var a = [CGDirectDisplayID](repeating: 0, count: Int(n))
-        CGGetOnlineDisplayList(n, &a, &n)
-        return a
-    }
-
     /// 在线的实体屏（含休眠中的）
     static func physicalOnline() -> CGDirectDisplayID? {
-        onlineIDs().first { !isVirtual($0) && !isIPad($0) && !isDummy($0) }
+        DisplayInventory.onlineIDs()?.first { DisplayInventory.describe($0).isPhysical }
     }
 
     /// 虚拟屏要不要自动建：只给没有实体屏的机器当落脚点。
     /// 有实体屏还建一块，等于凭空多出一块屏，会打乱主屏归属和 Dock 位置。
     static func needsVirtualScreen() -> Bool {
-        physicalOnline() == nil
+        guard let mode = DisplayInventory.currentMode() else { return false }
+        return mode != .physical
     }
 
     /// 主屏的合法候选：实体屏优先，其次 iPad。虚拟屏永远不在候选里。
@@ -253,8 +242,10 @@ enum Displays {
     /// 只剩虚拟屏一块时无解，返回 false 不动。
     @discardableResult
     static func enforceMain() -> Bool {
+        guard let mode = DisplayInventory.currentMode() else { return false }
+        if mode == .physical && physical() == nil { return false }
         guard let target = mainCandidate() else { return false }
-        if physical() != nil {
+        if mode == .physical {
             guard mainIsVirtual() else { return false }
         } else {
             // 没实体屏，iPad 是唯一合法主屏，只要不在它身上就切过去
@@ -265,15 +256,6 @@ enum Displays {
 }
 
 // MARK: - 状态
-
-/// 本次开机的时刻（秒）。用来区分「系统重启」和「面板自己重启」——
-/// 只有系统重启才需要重新把 iPad 顶成主屏。
-func bootTimeSeconds() -> Int {
-    var tv = timeval()
-    var size = MemoryLayout<timeval>.size
-    guard sysctlbyname("kern.boottime", &tv, &size, nil, 0) == 0 else { return 0 }
-    return Int(tv.tv_sec)
-}
 
 /// 说明面板上两个按钮的回调桥。AppState 不是 NSObject，不能直接当 target。
 private final class NoticeBridge: NSObject {
@@ -301,6 +283,7 @@ final class AppState: ObservableObject {
     @Published var logs: [String] = []
     @Published var interval: Int = 30
     @Published var virtualScreenOn = true
+    @Published var displayMode: DisplayInventory.Mode?
     /// 连续多少次 refresh 看到实体屏 / 看不到实体屏。给建屏和回收加滞后，
     /// 免得显示器休眠、唤醒的瞬间状态抖动导致建了又拆。
     private var physicalTicks = 0
@@ -374,35 +357,40 @@ final class AppState: ObservableObject {
         let vOn = VirtualScreen.shared.displayID != nil
         if vOn != virtualScreenOn { virtualScreenOn = vOn }
 
-        // 用在线屏判断有没有实体屏：显示器休眠时活动列表里会没有它，
-        // 拿活动列表判断会把休眠当成无头机器，凭空多建一块虚拟屏。
-        let hasPhysical = Displays.physicalOnline() != nil
-        if hasPhysical {
-            physicalTicks += 1
-            noPhysicalTicks = 0
+        let mode = DisplayInventory.currentMode()
+        if mode != displayMode { displayMode = mode }
+        if let mode {
+            let hasPhysical = mode == .physical
+            if hasPhysical {
+                physicalTicks += 1
+                noPhysicalTicks = 0
+            } else {
+                noPhysicalTicks += 1
+                physicalTicks = 0
+            }
+
+            // 只回收自动创建的屏，已有随航连接时保留它，避免意外断开。
+            if vOn, hasPhysical, physicalTicks >= 3,
+               Displays.ipad() == nil, Sidecar.connectedDevices().isEmpty,
+               !FileManager.default.fileExists(atPath: vOffFile),
+               FileManager.default.fileExists(atPath: vAutoFile) {
+                VirtualScreen.shared.turnOff()
+                try? FileManager.default.removeItem(atPath: vAutoFile)
+                virtualScreenOn = false
+                vlog("🧹 实体屏在位，回收自动创建的虚拟屏")
+            }
+
+            // 连续两次没有实体屏才建，避免显示器短暂重连时误判。
+            if !vOn, !hasPhysical, noPhysicalTicks >= 2,
+               !FileManager.default.fileExists(atPath: vOffFile),
+               VirtualScreen.shared.turnOn() != nil {
+                virtualScreenOn = true
+                try? "auto".write(toFile: vAutoFile, atomically: true, encoding: .utf8)
+                vlog("🖥️ 没有实体屏，已自动创建虚拟屏作为落脚点")
+            }
         } else {
-            noPhysicalTicks += 1
             physicalTicks = 0
-        }
-
-        // 有实体屏就不该有虚拟屏。连续 3 次（约 6 秒）确认实体屏在位才回收，
-        // 只回收自动建的那块，用户手动开的不动。
-        if vOn, hasPhysical, physicalTicks >= 3,
-           !FileManager.default.fileExists(atPath: vOffFile),
-           FileManager.default.fileExists(atPath: vAutoFile) {
-            VirtualScreen.shared.turnOff()
-            try? FileManager.default.removeItem(atPath: vAutoFile)
-            virtualScreenOn = false
-            vlog("🧹 实体屏在位，回收自动创建的虚拟屏")
-        }
-
-        // 没有实体屏才补建，且要连续 2 次（约 4 秒）都读不到，避免状态抖动。
-        if !vOn, !hasPhysical, noPhysicalTicks >= 2,
-           !FileManager.default.fileExists(atPath: vOffFile),
-           VirtualScreen.shared.turnOn() != nil {
-            virtualScreenOn = true
-            try? "auto".write(toFile: vAutoFile, atomically: true, encoding: .utf8)
-            vlog("🖥️ 没有实体屏，已自动创建虚拟屏作为落脚点")
+            noPhysicalTicks = 0
         }
 
         let ipad = Displays.ipad()
@@ -891,7 +879,15 @@ struct ContentView: View {
                     if s.watchdogPaused {
                         Text("已暂停").foregroundColor(.orange)
                     } else {
-                        Text("开启").foregroundColor(.green)
+                        if s.displayMode == .physical {
+                            Text("待命（有实体屏）").foregroundColor(.secondary)
+                        } else if s.displayMode == .waitingForVirtual {
+                            Text("等待虚拟屏").foregroundColor(.secondary)
+                        } else if s.displayMode == nil {
+                            Text("检测中").foregroundColor(.secondary)
+                        } else {
+                            Text("开启").foregroundColor(.green)
+                        }
                         Menu {
                             ForEach([10, 30, 60], id: \.self) { v in
                                 Button {
@@ -1093,17 +1089,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 不管是不是 --background 拉起。用户手动关掉随航后重启，守护照常工作。
         try? FileManager.default.removeItem(atPath: pauseFile)
         try? FileManager.default.removeItem(atPath: notifiedFile)
-
-        // 开机后第一次：让 watchdog 把 iPad 顶成主屏。
-        // 用户要求（11-23 22:37）：重启后除了恢复自动重连，还要默认 iPad 主屏；
-        // 不然没接实体屏的场合主屏会停在不存在的那块屏上。
-        // 用 boot time 认「系统重启」，面板自己重启时 .done 已经是同一个值，不会重复抢主屏。
-        let bt = "\(bootTimeSeconds())"
-        let done = (try? String(contentsOfFile: mainIpadDoneFile, encoding: .utf8))?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if bt != "0", done != bt {
-            try? bt.write(toFile: mainIpadFile, atomically: true, encoding: .utf8)
-        }
 
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.async { [weak self] in

@@ -8,7 +8,7 @@ BUILD="$ROOT/build"
 DIST="$BUILD/dist"
 APP_NAME="iPad随航.app"
 # ===== 版本号唯一来源：改这里，zip 名和 Info.plist 一起变 =====
-VERSION="2.4"
+VERSION="2.4.1"
 BUILD_NUM="${VERSION//./}"      # 2.3 → 23，CFBundleVersion 要纯数字
 # zip 名必须是纯 ASCII：GitHub 上传 Release 附件时会剥掉中文字符
 # （实测 "iPad随航工具集-2.0.zip" 会被存成 "iPad.-2.0.zip"）
@@ -26,12 +26,13 @@ mkdir -p "$DIST/payload"
 
 # ---------- 1. 后台守护 ----------
 say "编译 watchdog（arm64 + x86_64）"
-swiftc -O -target "arm64-apple-macos$MIN_MACOS" Sources/Watchdog.swift \
+swiftc -O -target "arm64-apple-macos$MIN_MACOS" Sources/DisplayInventory.swift Sources/Watchdog.swift \
     -framework IOKit -framework CoreAudio -o "$BUILD/w-arm"
-swiftc -O -target "x86_64-apple-macos$MIN_MACOS" Sources/Watchdog.swift \
+swiftc -O -target "x86_64-apple-macos$MIN_MACOS" Sources/DisplayInventory.swift Sources/Watchdog.swift \
     -framework IOKit -framework CoreAudio -o "$BUILD/w-x86"
 lipo -create "$BUILD/w-arm" "$BUILD/w-x86" -output "$DIST/payload/ipad-watchdog"
 chmod +x "$DIST/payload/ipad-watchdog"
+codesign --force -s - "$DIST/payload/ipad-watchdog"
 ok "ipad-watchdog"
 
 # ---------- 2. 自检工具 ----------
@@ -42,15 +43,16 @@ swiftc -O -target "x86_64-apple-macos$MIN_MACOS" Sources/IPadHere.swift \
     -framework IOKit -framework CoreAudio -o "$BUILD/h-x86"
 lipo -create "$BUILD/h-arm" "$BUILD/h-x86" -output "$DIST/payload/ipad-here"
 chmod +x "$DIST/payload/ipad-here"
+codesign --force -s - "$DIST/payload/ipad-here"
 ok "ipad-here"
 
 # ---------- 3. 菜单栏 app（内含虚拟屏）----------
 say "编译菜单栏面板（arm64 + x86_64）"
 swiftc -O -parse-as-library -target "arm64-apple-macos$MIN_MACOS" \
-    Sources/MenuBar.swift Sources/VirtualScreen.swift \
+    Sources/DisplayInventory.swift Sources/MenuBar.swift Sources/VirtualScreen.swift \
     -framework SwiftUI -framework AppKit -o "$BUILD/m-arm"
 swiftc -O -parse-as-library -target "x86_64-apple-macos$MIN_MACOS" \
-    Sources/MenuBar.swift Sources/VirtualScreen.swift \
+    Sources/DisplayInventory.swift Sources/MenuBar.swift Sources/VirtualScreen.swift \
     -framework SwiftUI -framework AppKit -o "$BUILD/m-x86"
 lipo -create "$BUILD/m-arm" "$BUILD/m-x86" -output "$BUILD/menu-bar"
 ok "菜单栏面板（含虚拟屏）"
@@ -82,7 +84,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST_EOF
 </dict>
 </plist>
 PLIST_EOF
-codesign --force --deep -s - "$APP" 2>/dev/null || true
+codesign --force --deep -s - "$APP"
 ok "$APP_NAME"
 
 # ---------- 5. 附上安装脚本 ----------

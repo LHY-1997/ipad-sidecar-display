@@ -1,10 +1,14 @@
 # iPad Sidecar Display
 
+此 fork 基于原版 v2.4。自动连接只在 macOS 没有检测到在线实体屏、且虚拟屏已经建立后触发；存在实体屏时仍可在面板中手动连接 iPad。此版本不再用键鼠空闲、音频、锁屏或熄屏状态阻止无实体屏时的重连。
+
+macOS 的在线列表包含休眠中的显示器。某些显示器关闭电源后依然显示为在线，此时软件仍会认为实体屏存在；如需进入无实体屏模式，可能需要断开显示线。系统显示器查询失败时，软件会等待下一轮检查。
+
 把 iPad 变成 Mac 的主显示器，自动连接，失败不弹窗，**自带虚拟屏，不依赖 BetterDisplay**。
 
-**English:** Turn your iPad into a Mac's primary display — auto-connect when you're at the desk, silent cleanup of the `-1010` connection-failure popup, no manual Screen Mirroring clicks every morning, and a built-in 5K HiDPI virtual display so you can drop BetterDisplay entirely.
+**English:** Automatically connect iPad as the main display when no physical monitor is online. When a physical monitor is online, automatic connection stays idle and manual connection remains available.
 
-适合固定工位：iPad 架在支架上当主屏，Mac mini 藏在桌下，每天开机自动连上，人走开自动不连。
+适合有时使用实体显示器、有时仅使用 iPad 的 Mac mini。
 
 <p align="center">
   <img src="docs/panel.png" alt="iPad 随航控制面板：已连接 iPad Pro、已设 iPad 为主屏、虚拟屏开启、自动重连 10 秒、三条就绪日志、左下角显示版本号" width="280">
@@ -28,41 +32,34 @@ macOS 的随航（Sidecar）功能本身很好用，但把它当**主显示器**
 
 ## 特性
 
-- **自动连接**：开机自启，人回到电脑前自动连上，并设为主显示器
-- **人不在就不连**：熄屏、锁屏、长时间无操作且无音频 → 不发起任何连接，从根上消除弹窗
+- **自动连接**：没有在线实体屏时建立虚拟屏，连接 iPad 并设为主屏。
+- **实体屏待命**：有在线实体屏时停止自动连接，面板保留手动连接。
 - **弹窗兜底**：万一真失败，弹窗进程会在十秒内被清掉
 - **菜单栏图标**：常驻菜单栏，点一下弹出面板（v2.1 起）。面板里手动连接、断开、暂停自动重连
-- **自带 5K HiDPI 虚拟屏**：面板进程里直接建一块 2560×1440 逻辑 / 5120×2880 物理的假屏，无头 Mac mini 开机就有画面，不用装 BetterDisplay
-- **虚拟屏开关**：面板里一键开关，默认开启；关掉会提示会丢随航
-- **面板挂了自动拉起**：虚拟屏由面板进程持有，watchdog 每 10 秒看一眼，面板不在了就重新拉起并重建虚拟屏（实测 kill -9 后 7 秒恢复）
-- **轻量**：不额外跑进程，整套只有 watchdog + 面板（BetterDisplay 光建假屏就占 88 MB）
+- **自带 5K HiDPI 虚拟屏**：没有在线实体屏时，由辅助进程创建 2560×1440 逻辑 / 5120×2880 物理的虚拟屏。
+- **虚拟屏开关**：面板支持手动开关，关闭前会提示可能影响随航。
+- **面板挂了自动拉起**：watchdog 定期检查面板，虚拟屏由辅助进程持有。
 - **通用二进制**：Apple Silicon 和 Intel 都支持
 
 ## 安装
 
-### 下载即用
+### 安装此 fork
 
-从 [Releases](https://github.com/nishtica/ipad-sidecar-display/releases/latest) 下载 `iPad-Sidecar-Display-2.4.zip`，解压后**右键点击 `安装.command`** 选「打开」。
-
-> **别点绿色的 Code 按钮。** GitHub 首页的 `Code → Download ZIP`、Release 页面底部的 `Source code (zip)` 都是**源码包**，里面只有代码、没有编译好的程序，装不了——运行 `安装.command` 会报「缺少 payload」。认准 Releases 里 Assets 下的 `iPad-Sidecar-Display-2.4.zip`，解压出来应该有一个 `payload` 文件夹，里面有 `iPad随航.app`。
-
-> 为什么是右键？脚本没有 Apple 开发者签名，macOS 第一次会拦。右键选「打开」会多出「打开」按钮，点它就行。
-
-> zip 为什么用英文名：GitHub 上传 Release 附件时会剥掉文件名里的中文字符，`iPad随航工具集-2.0.zip` 会被存成 `iPad.-2.0.zip`。解压出来的东西都是中文的，只有外层文件名是英文。
+从本 fork 构建后，解压生成的 `iPad-Sidecar-Display-2.4.1.zip`，右键点击 `安装.command` 并选择「打开」。安装会覆盖现有的 iPad 随航应用和后台组件。
 
 ### 从源码构建
 
 ```bash
-git clone git@github.com:nishtica/ipad-sidecar-display.git
+git clone https://github.com/LHY-1997/ipad-sidecar-display.git
 cd ipad-sidecar-display
 ./build.sh
 ```
 
-产出 `iPad-Sidecar-Display-2.4.zip`，解压后同样双击 `安装.command`。
+产出 `iPad-Sidecar-Display-2.4.1.zip`，解压后同样双击 `安装.command`。
 
 需要 macOS 13+ 和 Xcode 命令行工具（`xcode-select --install`）。
 
-**改版本号只改一处**：`build.sh` 顶部的 `VERSION`。zip 文件名和 app 的 `Info.plist` 都引用它，`CFBundleVersion` 自动取去掉小数点的形式（`2.4` → `24`）。面板左下角显示的 `v2.4` 是运行时从 `Info.plist` 读的，不用另外维护。
+**改版本号只改一处**：`build.sh` 顶部的 `VERSION`。zip 文件名和 app 的 `Info.plist` 都引用它，`CFBundleVersion` 自动取去掉小数点的形式（`2.4.1` → `241`）。面板左下角显示的 `v2.4.1` 是运行时从 `Info.plist` 读的，不用另外维护。
 
 ## 工作原理
 
@@ -105,22 +102,11 @@ SidecarDisplayManager *mgr = [SidecarDisplayManager new];
 
 面板上的「主屏切回实体屏」按钮：主屏在虚拟屏上（异常）或 iPad 当主屏时出现，一键还给实体屏（没有实体屏时退回 iPad）。
 
-### 判断"人在不在"
+### 自动连接条件
 
-这是整个工具的核心。最初只判断"屏幕是否熄灭"，但显示器设成永不关闭时这个判据永远为真，人走了照样每 10 秒发起一次连接。所以按可靠性从高到低叠加：
+面板和 watchdog 共用在线显示器判断。有实体屏时不发起自动连接。无实体屏时先创建虚拟屏，确认系统已识别虚拟屏后再连接 iPad。连接前会再次检查实体屏是否已接入。
 
-| 信号 | 判定 | API |
-|---|---|---|
-| 屏幕锁定 | 不在 | `CGSessionCopyCurrentDictionary()` 的 `CGSSessionScreenIsLocked` |
-| 屏幕熄灭 | 不在 | `CGDisplayIsAsleep(CGMainDisplayID())` |
-| 键鼠 5 分钟内有动 | 在 | `IOHIDSystem` 的 `HIDIdleTime` |
-| 默认输出设备在出声 | 在 | `kAudioDevicePropertyDeviceIsRunningSomewhere` |
-| 键鼠 30 分钟内动过 | 在 | 同上 `HIDIdleTime` |
-| 全不满足 | 不在 | — |
-
-"有音频输出"这一条是为了覆盖看视频、听音乐时鼠标几十分钟不动的情况。
-
-**LaunchAgent 必须设 `LimitLoadToSessionType = Aqua`**，否则跑在后台会话里 `CGSessionCopyCurrentDictionary()` 返回 nil，锁屏永远检测不到。
+在无实体屏模式中，后台会按设定间隔重试，锁屏、熄屏或键鼠空闲不会单独阻止重连。可在面板中暂停自动重连。手动连接仍然可用，实体屏接入也不会主动断开已有随航连接。
 
 ### 弹窗拦截
 
@@ -143,13 +129,13 @@ SidecarDisplayManager *mgr = [SidecarDisplayManager new];
 
 一次连接流程最长 35 秒（等回调 20 秒 + 等屏出现 15 秒），而 LaunchAgent 每 10 秒拉一个新进程。用 `flock` 锁住 `.lock` 文件，保证同时只有一个实例在跑。
 
-### 虚拟屏（内置在菜单栏面板里）
+### 虚拟屏（由辅助进程持有）
 
 无头 Mac mini 没有物理屏幕，开机后如果没有虚拟显示器，WindowServer 就没地方画桌面，随航也无从接管。
 
-传统做法是装 BetterDisplay，但它 88 MB 内存只为了建一块假屏。现在 `iPad随航.app` 自己在进程里调 `CGVirtualDisplay` 私有 API 建这块屏——不额外跑进程，也不用装 BetterDisplay。
+传统做法是装 BetterDisplay，但它 88 MB 内存只为了建一块假屏。现在 `iPad随航.app` 启动辅助进程，调用 `CGVirtualDisplay` 私有 API 创建虚拟屏。
 
-**开关在面板里，默认开启。** 关掉会弹警告：实测关掉虚拟屏后 iPad 随航会**当场断开**，系统退到一块 1920×1080 的兜底屏（1x，HiDPI 没了），十几秒后才自动重连回来。
+**开关在面板里，没有在线实体屏时自动开启。** 关掉会弹警告，随航连接可能中断。手动关闭虚拟屏后，自动连接会等待虚拟屏重新启用。
 
 开关状态记在 `~/Library/Application Support/ipad-watchdog/vdisplay.off`：文件存在 = 关闭，不存在 = 开启。所以想强制恢复默认，删掉这个文件重启即可。
 
@@ -185,9 +171,9 @@ dyld_info -imports /Applications/BetterDisplay.app/Contents/MacOS/BetterDisplay 
 let opts = [kCGDisplayShowDuplicateLowResolutionModes as String: true] as CFDictionary
 ```
 
-**必须由进程强引用持有**：`CGVirtualDisplay` 实例一销毁，虚拟屏立刻消失。菜单栏面板本来就是常驻进程，天然满足；`AppDelegate` 在 `applicationDidFinishLaunching` 里最早建屏，`AppState` 初始化时再兜一次（幂等）。
+**由辅助进程持有虚拟屏**：关闭虚拟屏时辅助进程退出，系统随后移除对应显示器。
 
-**面板挂了怎么办**：虚拟屏跟着面板走，面板一崩虚拟屏立刻消失，系统退到 1920×1080 兜底屏、随航断开。所以 watchdog 每次运行开头会先 `ensurePanelRunning()`——面板不在就用 `open -a --args --background` 拉起来，虚拟屏随之重建。实测 `kill -9` 面板后 7 秒内恢复，iPad 9 秒内重连。
+**面板退出时**，辅助进程也随之退出。watchdog 会根据面板退出状态决定是否重新启动面板。
 
 区分「崩了」和「用户主动退出」靠 `panel.off`：面板的「退出」按钮在虚拟屏开着时会先弹警告（说明退出会连虚拟屏一起关掉、随航会断），确认后写 `panel.off` 再退出；下次面板启动时自动删掉这个标记。watchdog 看到 `panel.off` 就不干预。
 
@@ -216,7 +202,7 @@ let opts = [kCGDisplayShowDuplicateLowResolutionModes as String: true] as CFDict
 - iPad 深度休眠，无线响应超时
 - iPad 关机或电量耗尽
 
-**`SidecarDevice` 的 12 个 ivar 里没有任何可用性字段**（没有 `isAvailable`、`isConnected`、`connectionState`），所以"检查设备能不能连"这个动作本身必然等于"真的发起连接"，不存在免费的前置探测。这也是为什么只能靠"人在不在"来避免无谓尝试。
+**`SidecarDevice` 的 12 个 ivar 里没有任何可用性字段**（没有 `isAvailable`、`isConnected`、`connectionState`），所以"检查设备能不能连"这个动作本身必然等于"真的发起连接"，不存在免费的前置探测。本 fork 只在没有在线实体屏时尝试自动连接。
 
 ## 配置
 
@@ -226,13 +212,12 @@ let opts = [kCGDisplayShowDuplicateLowResolutionModes as String: true] as CFDict
 |---|---|
 | `pause` | 存在即暂停守护（菜单栏也能开关） |
 | `target` | 指定优先连接的设备 UUID |
-| `quiet` | 静默时段，内容如 `2 7` 表示 02:00-07:00 不连接 |
 | `watchdog.log` | 日志，只在有事件时写 |
 | `vdisplay.log` | 虚拟屏日志（建屏、切 HiDPI、开关） |
-| `vdisplay.off` | 存在 = 虚拟屏被手动关闭，不存在 = 默认开启 |
+| `vdisplay.off` | 当前运行中手动关闭虚拟屏的标记，面板重启时清除 |
 | `panel.off` | 存在 = 用户主动退出了面板，watchdog 不再拉起；重新打开面板会自动清掉 |
 
-自检：
+自检（显示屏幕和键鼠状态，此 fork 不用这些状态决定自动连接）：
 
 ```bash
 ~/Library/Application Support/ipad-watchdog/ipad-here
@@ -247,10 +232,9 @@ let opts = [kCGDisplayShowDuplicateLowResolutionModes as String: true] as CFDict
 
 - 使用私有框架 `SidecarCore`，macOS 大版本更新可能失效。失效表现：日志持续记「SidecarCore 加载失败」
 - app 是 adhoc 签名，首次打开会被 Gatekeeper 拦，需要右键打开
-- 静音看视频超过 30 分钟会被判定为"人不在"，碰一下鼠标即恢复
 - 虚拟屏用私有 API `CGVirtualDisplay`（来自 CoreGraphics），macOS 大版本更新可能失效。失效表现：`vdisplay.log` 记「私有类缺失」
 - 虚拟屏分辨率写死在 `Sources/VirtualScreen.swift` 顶部（`logicalW` / `logicalH`），改配置需重编译
-- 关掉虚拟屏后随航会断开一次，系统退到 1920×1080 兜底屏，等十几秒自动重连
+- 手动关闭虚拟屏可能中断随航。重新开启虚拟屏后才能继续自动连接。
 - 只测过 iPad Pro 12.9"（M1）和 macOS 26/27，其他组合未验证
 
 ## License
