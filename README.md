@@ -59,6 +59,8 @@ cd ipad-sidecar-display
 
 需要 macOS 13+ 和 Xcode 命令行工具（`xcode-select --install`）。
 
+运行 `./build.sh --test` 可构建独立的 Test 版安装包。Test 版使用不同的应用标识、配置目录和后台服务。安装会切换到 Test 模式，并暂停原版后台服务。安装包中的「恢复原版.command」可以切换回来。
+
 **改版本号只改一处**：`build.sh` 顶部的 `VERSION`。zip 文件名和 app 的 `Info.plist` 都引用它，`CFBundleVersion` 自动取去掉小数点的形式（`2.4.1` → `241`）。面板左下角显示的 `v2.4.1` 是运行时从 `Info.plist` 读的，不用另外维护。
 
 ## 工作原理

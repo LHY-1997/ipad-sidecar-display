@@ -22,7 +22,7 @@ func postNotifyOnce() {
         try? "\(Date())".write(toFile: notifyFile, atomically: true, encoding: .utf8)
     }
 }
-let base = NSHomeDirectory() + "/Library/Application Support/ipad-watchdog"
+let base = AppEnvironment.supportPath
 let pauseFile = base + "/pause"
 let logFile = base + "/watchdog.log"
 let targetFile = base + "/target"
@@ -60,8 +60,8 @@ func loadTargetId() -> String {
 // 用户主动关掉虚拟屏（vdisplay.off）或主动退出面板（panel.off）时不干预。
 
 let panelOffFile = base + "/panel.off"
-let panelApp = "/Applications/iPad随航.app"
-let panelBin = panelApp + "/Contents/MacOS/iPad随航"
+let panelApp = AppEnvironment.appPath
+let panelBin = panelApp + "/Contents/MacOS/" + AppEnvironment.executableName
 
 func panelRunning() -> Bool {
     let p = Process()

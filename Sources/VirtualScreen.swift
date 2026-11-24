@@ -22,7 +22,7 @@ import AppKit
 
 // MARK: - 日志
 
-let vBaseDir = NSHomeDirectory() + "/Library/Application Support/ipad-watchdog"
+let vBaseDir = AppEnvironment.supportPath
 let vLogFile = vBaseDir + "/vdisplay.log"
 
 func vlog(_ msg: String) {

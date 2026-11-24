@@ -4,7 +4,7 @@ import CoreGraphics
 import ObjectiveC
 
 let IPAD_MODEL = DisplayInventory.ipadModel
-let baseDir = NSHomeDirectory() + "/Library/Application Support/ipad-watchdog"
+let baseDir = AppEnvironment.supportPath
 let pauseFile = baseDir + "/pause"
 let logFile = baseDir + "/watchdog.log"
 let targetFile = baseDir + "/target"
@@ -20,7 +20,7 @@ let vOffFile = baseDir + "/vdisplay.off"
 let vAutoFile = baseDir + "/vdisplay.auto"
 /// 用户主动退出面板时创建，watchdog 看到就不再把面板拉起来
 let panelOffFile = baseDir + "/panel.off"
-let watchdogPlist = NSHomeDirectory() + "/Library/LaunchAgents/com.local.ipad-watchdog.plist"
+let watchdogPlist = AppEnvironment.watchdogPlist
 /// 已经引导过一次辅助功能授权。存在就不再自动弹，避免每次开机都烦人。
 
 struct DeviceInfo: Identifiable, Equatable {
@@ -765,7 +765,7 @@ final class AppState: ObservableObject {
         else { return false }
 
         let uid = getuid()
-        run("/bin/launchctl", ["bootout", "gui/\(uid)/com.local.ipad-watchdog"])
+        run("/bin/launchctl", ["bootout", "gui/\(uid)/\(AppEnvironment.watchdogLabel)"])
         return run("/bin/launchctl", ["bootstrap", "gui/\(uid)", watchdogPlist]) == 0
     }
 
@@ -796,7 +796,7 @@ struct ContentView: View {
             HStack(spacing: 6) {
                 Image(systemName: "ipad.landscape")
                     .foregroundColor(.accentColor)
-                Text("iPad 随航")
+                Text(AppEnvironment.displayName)
                     .font(.system(size: 13, weight: .semibold))
                 Spacer()
                 Circle()
@@ -1037,8 +1037,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 把主面板窗口提到前面。
     /// 加了菜单栏图标之后 NSApp.windows 里会混进图标的附属窗口，必须按标题筛。
     private func showPanel() {
-        let w = NSApp.windows.first { $0.title == "iPad 随航" && $0.canBecomeMain }
-            ?? NSApp.windows.first { $0.title == "iPad 随航" }
+        let w = NSApp.windows.first { $0.title == AppEnvironment.displayName && $0.canBecomeMain }
+            ?? NSApp.windows.first { $0.title == AppEnvironment.displayName }
         guard let w = w else { return }
         positionOnMouseScreen(w)
         w.makeKeyAndOrderFront(nil)
@@ -1106,6 +1106,19 @@ enum SidecarMain {
         if CommandLine.arguments.contains("--vdisplay-helper") {
             runVirtualScreenHelper()
         }
+        #if SIDECAR_TEST
+        if !FileManager.default.fileExists(atPath: AppEnvironment.supportPath + "/test-active") {
+            let app = NSApplication.shared
+            app.setActivationPolicy(.regular)
+            app.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.messageText = "请先切换到 Test 版"
+            alert.informativeText = "请打开测试安装包中的「切换 Test.command」，它会暂停原版后台服务并启动测试版。"
+            alert.addButton(withTitle: "好")
+            alert.runModal()
+            return
+        }
+        #endif
         SidecarApp.main()
     }
 }
@@ -1115,7 +1128,7 @@ struct SidecarApp: App {
     @StateObject private var state = AppState()
 
     var body: some Scene {
-        WindowGroup("iPad 随航") {
+        WindowGroup(AppEnvironment.displayName) {
             ContentView()
                 .environmentObject(state)
         }
@@ -1125,7 +1138,7 @@ struct SidecarApp: App {
         }
 
         // 菜单栏图标：点一下弹出面板。v2.0 只有 Dock 图标，菜单栏上是空的。
-        MenuBarExtra("iPad 随航", systemImage: "ipad.landscape") {
+        MenuBarExtra(AppEnvironment.displayName, systemImage: "ipad.landscape") {
             ContentView()
                 .environmentObject(state)
         }
